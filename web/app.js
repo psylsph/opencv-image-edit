@@ -23,17 +23,21 @@ const state = {
   // Mask canvas drawing state
   mask: {
     enabled: false,
-    ctx: null,            // 2D rendering context
-    displayW: 0,          // canvas CSS size (matches displayed img)
+    mode: "click",          // "click" = SAM point-prompt, "paint" = manual brush
+    ctx: null,              // 2D rendering context
+    displayW: 0,            // canvas CSS size (matches displayed img)
     displayH: 0,
-    imageW: 0,            // original image size (for scaling on submit)
+    imageW: 0,              // original image size (for scaling on submit)
     imageH: 0,
     brushSize: 24,
     drawing: false,
     lastX: 0,
     lastY: 0,
-    history: [],          // stack of ImageData snapshots (for undo)
-    isDirty: false,       // has user painted anything?
+    history: [],            // stack of ImageData snapshots (for undo, paint mode only)
+    isDirty: false,         // has user painted anything?
+    detectedMask: null,     // base64 PNG of SAM mask (click mode)
+    detectionScore: 0,      // IoU score from SAM
+    segmenting: false,      // request in flight
   },
 };
 
@@ -55,6 +59,7 @@ async function init() {
   renderPresetPills();
   bindEvents();
   applyPreset(null); // start at defaults
+  setMaskMode("click"); // initialize mask mode UI
   registerServiceWorker();
 }
 
@@ -136,10 +141,14 @@ function bindEvents() {
     state.mask.enabled = e.target.checked;
     $("#mask-canvas").hidden = !e.target.checked;
     if (e.target.checked) {
-      // If canvas hasn't been sized yet (e.g. user toggled before picking file),
-      // we'll set it up on file select. Otherwise just show it.
       if (state.mask.imageW) setupMaskCanvas();
+    } else {
+      clearClickSelection();
     }
+  });
+  // Mode switcher (Click vs Paint)
+  $$("input[name='inpaint-mode']").forEach((r) => {
+    r.addEventListener("change", (e) => setMaskMode(e.target.value));
   });
   // Brush size live update
   $("#brush-size").addEventListener("input", (e) => {
@@ -150,9 +159,22 @@ function bindEvents() {
   $("#inpaint-radius").addEventListener("input", (e) => {
     $("#inpaint-radius-value").textContent = e.target.value;
   });
-  // Undo + Clear
+  // Undo + Clear (paint mode)
   $("#inpaint-undo").addEventListener("click", undoMaskStroke);
   $("#inpaint-clear").addEventListener("click", clearMask);
+  // Click-mode actions
+  $("#inpaint-accept").addEventListener("click", () => {
+    // Hand off to processInpaint by setting a flag, then triggering processImage
+    processImage();
+  });
+  $("#inpaint-retry").addEventListener("click", () => {
+    clearClickSelection();
+    $("#inpaint-click-status").hidden = false;
+    $("#inpaint-click-status").textContent = "Tap another point to try again.";
+  });
+  $("#inpaint-cancel").addEventListener("click", () => {
+    clearClickSelection();
+  });
 
   // Canvas pointer events for painting
   const canvas = $("#mask-canvas");
@@ -433,6 +455,11 @@ function pushMaskHistory() {
 
 function startMaskStroke(evt) {
   if (!state.mask.enabled || !state.mask.ctx) return;
+  // In click mode, the click handler takes over — don't draw a paint dot
+  if (state.mask.mode === "click") {
+    onMaskClick(evt);
+    return;
+  }
   evt.preventDefault();
   const { x, y } = getCanvasCoords(evt);
   state.mask.drawing = true;
@@ -494,23 +521,24 @@ function undoMaskStroke() {
   state.mask.isDirty = state.mask.history.length > 0;
 }
 
-/** Returns a Promise<Blob> PNG of the mask scaled to the original image size.
+/** Returns a Promise<Blob> PNG of the mask at original image resolution.
  *  Black = keep, white = remove. */
 async function getMaskPngBlob() {
+  // In click mode, the detected mask is already a clean PNG at original size
+  if (state.mask.mode === "click" && state.mask.detectedMask) {
+    const resp = await fetch(state.mask.detectedMask);
+    return await resp.blob();
+  }
+  // Paint mode: render the display canvas (with red strokes) into a clean
+  // black/white mask at original image resolution
   const displayCanvas = $("#mask-canvas");
-  // Render the display canvas to an offscreen canvas at original image size
   const out = document.createElement("canvas");
   out.width = state.mask.imageW;
   out.height = state.mask.imageH;
   const octx = out.getContext("2d");
-  // Black background (keep)
   octx.fillStyle = "#000000";
   octx.fillRect(0, 0, out.width, out.height);
-  // The display canvas already contains a red-painted mask. We need to convert
-  // "any non-transparent pixel" -> white. Easiest: draw the display canvas,
-  // then composite the alpha channel as white.
   octx.drawImage(displayCanvas, 0, 0, out.width, out.height);
-  // Use 'source-in' to keep only pixels where the source had alpha > 0
   octx.globalCompositeOperation = "source-in";
   octx.fillStyle = "#ffffff";
   octx.fillRect(0, 0, out.width, out.height);
@@ -519,14 +547,127 @@ async function getMaskPngBlob() {
 }
 
 function hasMaskContent() {
+  // Click mode: we have a mask if SAM returned one
+  if (state.mask.mode === "click") return !!state.mask.detectedMask;
+  // Paint mode: scan the canvas for any non-transparent pixel
   if (!state.mask.ctx || !state.mask.isDirty) return false;
-  // Quick check: any non-transparent pixel on the display canvas
   const canvas = $("#mask-canvas");
   const data = state.mask.ctx.getImageData(0, 0, canvas.width, canvas.height).data;
   for (let i = 3; i < data.length; i += 4) {
     if (data[i] > 0) return true;
   }
   return false;
+}
+
+// ============================================================================
+// SAM (point-prompt segmentation)
+// ============================================================================
+
+function clearClickSelection() {
+  state.mask.detectedMask = null;
+  state.mask.detectionScore = 0;
+  if (state.mask.ctx) state.mask.ctx.clearRect(0, 0, $("#mask-canvas").width, $("#mask-canvas").height);
+  $("#inpaint-click-actions").hidden = true;
+  $("#inpaint-click-status").hidden = true;
+  $("#inpaint-click-status").textContent = "";
+}
+
+function drawDetectedMaskOnCanvas(dataUrl) {
+  if (!state.mask.ctx) return;
+  const ctx = state.mask.ctx;
+  // Clear the canvas first
+  ctx.clearRect(0, 0, $("#mask-canvas").width, $("#mask-canvas").height);
+  // Load the SAM mask image and draw it scaled to display size
+  const img = new Image();
+  img.onload = () => {
+    ctx.clearRect(0, 0, $("#mask-canvas").width, $("#mask-canvas").height);
+    ctx.drawImage(img, 0, 0, state.mask.displayW, state.mask.displayH);
+  };
+  img.src = dataUrl;
+}
+
+async function runSegmentation(clientX, clientY) {
+  if (state.mask.segmenting) return;
+  // Convert client (display) coords to original image coords
+  const dispX = clientX - $("#mask-canvas").getBoundingClientRect().left;
+  const dispY = clientY - $("#mask-canvas").getBoundingClientRect().top;
+  const imgX = Math.round(dispX * state.mask.imageW / state.mask.displayW);
+  const imgY = Math.round(dispY * state.mask.imageH / state.mask.displayH);
+  // Drop a small marker at the click point so the user sees what they clicked
+  if (state.mask.ctx) {
+    state.mask.ctx.fillStyle = "rgba(80, 200, 255, 0.95)";  // cyan dot
+    state.mask.ctx.beginPath();
+    state.mask.ctx.arc(dispX, dispY, 6, 0, Math.PI * 2);
+    state.mask.ctx.fill();
+  }
+  // Send to server
+  const formData = new FormData();
+  formData.append("file", state.file);
+  formData.append("x", String(imgX));
+  formData.append("y", String(imgY));
+  state.mask.segmenting = true;
+  $("#inpaint-click-status").hidden = false;
+  $("#inpaint-click-status").textContent = "Detecting… (this takes ~1s)";
+  setStatus("Detecting object…", "");
+  try {
+    const resp = await fetch("/api/v1/segment", { method: "POST", body: formData });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || body.message || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    state.mask.detectedMask = data.mask;
+    state.mask.detectionScore = data.score;
+    drawDetectedMaskOnCanvas(data.mask);
+    const areaPct = (data.mask_area_pct * 100).toFixed(1);
+    $("#inpaint-click-status").textContent =
+      `Detected (IoU ${data.score.toFixed(2)}, ${areaPct}% of image). ✅ Remove or 🎯 Try again.`;
+    $("#inpaint-click-actions").hidden = false;
+    setStatus(`Detected (IoU ${data.score.toFixed(2)}, ${areaPct}%)`, "");
+  } catch (err) {
+    setStatus(`Segmentation error: ${err.message}`, "error");
+    clearClickSelection();
+  } finally {
+    state.mask.segmenting = false;
+  }
+}
+
+// Click handler for click-mode (separate from drag-paint handlers)
+function onMaskClick(evt) {
+  if (!state.mask.enabled) return;
+  if (state.mask.mode !== "click") return;
+  if (state.mask.segmenting) return;
+  if (!state.file) return;
+  // We accept only single-tap (no drag). Check that the pointer didn't move much.
+  const startX = evt.clientX, startY = evt.clientY;
+  const onUp = (upEvt) => {
+    $("#mask-canvas").removeEventListener("pointerup", onUp);
+    const dx = upEvt.clientX - startX;
+    const dy = upEvt.clientY - startY;
+    if (Math.hypot(dx, dy) > 10) return;  // it was a drag, not a tap
+    runSegmentation(startX, startY);
+  };
+  $("#mask-canvas").addEventListener("pointerup", onUp, { once: true });
+}
+
+// Mode switcher
+function setMaskMode(mode) {
+  state.mask.mode = mode;
+  clearClickSelection();
+  // Reset paint history
+  state.mask.history = [];
+  state.mask.isDirty = false;
+  if (state.mask.ctx) {
+    state.mask.ctx.clearRect(0, 0, $("#mask-canvas").width, $("#mask-canvas").height);
+  }
+  // Show/hide sub-controls
+  $("#inpaint-paint-controls").hidden = (mode !== "paint");
+  $("#inpaint-click-controls").hidden = (mode !== "click");
+  // Update hint
+  $("#inpaint-hint").textContent =
+    mode === "click"
+      ? "Tap an object to detect it automatically, then remove."
+      : "Drag your finger over the object to remove it. Brush size below.";
 }
 
 async function processImage() {

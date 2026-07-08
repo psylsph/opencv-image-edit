@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="style.css?v=6" />
+  <link rel="stylesheet" href="style.css?v=7" />
 </head>
 <body>
   <main class="app">
@@ -158,11 +158,33 @@
           </label>
         </summary>
         <div class="control-body">
-          <p class="control-hint">Drag your finger over the object to remove it. Brush size below.</p>
-          <label class="slider-row">
-            <span>Brush size <output id="brush-value">24</output></span>
-            <input type="range" id="brush-size" min="5" max="80" step="1" value="24" />
-          </label>
+          <fieldset class="segmented" id="inpaint-mode">
+            <legend class="sr-only">Selection mode</legend>
+            <label><input type="radio" name="inpaint-mode" value="click" checked /><span>🎯 Click</span></label>
+            <label><input type="radio" name="inpaint-mode" value="paint" /><span>✏️ Paint</span></label>
+          </fieldset>
+          <p class="control-hint" id="inpaint-hint">Tap an object to detect it automatically, then remove.</p>
+
+          <div id="inpaint-paint-controls">
+            <label class="slider-row">
+              <span>Brush size <output id="brush-value">24</output></span>
+              <input type="range" id="brush-size" min="5" max="80" step="1" value="24" />
+            </label>
+            <div class="inpaint-buttons">
+              <button id="inpaint-undo" class="btn btn-secondary" type="button">↶ Undo</button>
+              <button id="inpaint-clear" class="btn btn-secondary" type="button">🗑️ Clear</button>
+            </div>
+          </div>
+
+          <div id="inpaint-click-controls" hidden>
+            <div class="inpaint-buttons" id="inpaint-click-actions" hidden>
+              <button id="inpaint-accept" class="btn btn-primary" type="button">✅ Remove</button>
+              <button id="inpaint-retry" class="btn btn-secondary" type="button">🎯 Try again</button>
+              <button id="inpaint-cancel" class="btn btn-secondary" type="button">❌ Cancel</button>
+            </div>
+            <p class="control-hint" id="inpaint-click-status" hidden></p>
+          </div>
+
           <fieldset class="segmented" id="inpaint-algo">
             <legend class="sr-only">Inpainting algorithm</legend>
             <label><input type="radio" name="inpaint-algo" value="telea" checked /><span>Fast (TELEA)</span></label>
@@ -172,10 +194,6 @@
             <span>Fill radius <output id="inpaint-radius-value">3</output></span>
             <input type="range" id="inpaint-radius" min="1" max="20" step="1" value="3" />
           </label>
-          <div class="inpaint-buttons">
-            <button id="inpaint-undo" class="btn btn-secondary" type="button">↶ Undo</button>
-            <button id="inpaint-clear" class="btn btn-secondary" type="button">🗑️ Clear</button>
-          </div>
         </div>
       </details>
     </section>
@@ -235,6 +253,6 @@
     </footer>
   </main>
 
-  <script type="module" src="app.js?v=6"></script>
+  <script type="module" src="app.js?v=7"></script>
 </body>
 </html>

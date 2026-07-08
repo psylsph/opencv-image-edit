@@ -361,9 +361,13 @@ input[type="range"]:focus::-moz-range-thumb { box-shadow: 0 0 0 3px rgba(110, 16
   grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
+#inpaint-click-actions {
+  grid-template-columns: 2fr 1fr 1fr;  /* primary action wider */
+}
 .inpaint-buttons .btn {
   min-height: 44px;
   font-size: 14px;
+  padding: 8px 4px;
 }
 
 /* Disabled state for control rows */
