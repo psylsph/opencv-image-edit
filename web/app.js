@@ -169,26 +169,25 @@ function bindEvents() {
   $("#inpaint-radius").addEventListener("input", (e) => {
     $("#inpaint-radius-value").textContent = e.target.value;
   });
-  // Hide fill radius when AI (LaMa/OpenAI/SD) is selected — they don't use the param
+  // Hide fill radius when AI (LaMa/SD) is selected — they don't use the param
   function updateInpaintRadiusVisibility() {
     const checked = document.querySelector("input[name='inpaint-algo']:checked");
     if (!checked) return;
     const val = checked.value;
     const row = $("#inpaint-radius-row");
     const promptRow = $("#inpaint-prompt-row");
-    // LaMa, SD, OpenAI don't use radius; only NS/TELEA do
+    // LaMa and SD don't use radius; only NS/TELEA do
     if (row) row.style.display = (val === "ns" || val === "telea") ? "flex" : "none";
-    // Prompt field shows for generative algorithms
-    if (promptRow) promptRow.style.display = (val === "sd" || val === "openai") ? "flex" : "none";
+    // Prompt field shows for SD only
+    if (promptRow) promptRow.style.display = val === "sd" ? "flex" : "none";
   }
   $$("input[name='inpaint-algo']").forEach((r) => {
     r.addEventListener("change", updateInpaintRadiusVisibility);
   });
   updateInpaintRadiusVisibility();
 
-  // --- Generative model status (SD + OpenAI) ---
+  // --- Generative model status (SD only) ---
   let sdAvailable = false;
-  let openaiAvailable = false;
   let sdPollTimer = null;
 
   async function checkSdStatus() {
@@ -199,17 +198,6 @@ function bindEvents() {
       updateGenWarning();
     } catch {
       // endpoint not available — assume SD not set up
-    }
-  }
-
-  async function checkOpenaiStatus() {
-    try {
-      const resp = await fetch("/api/v1/openai/status");
-      const data = await resp.json();
-      openaiAvailable = data.available;
-      updateGenWarning();
-    } catch {
-      // endpoint not available
     }
   }
 
@@ -225,10 +213,6 @@ function bindEvents() {
       warning.hidden = false;
       if (warningText) warningText.textContent = "🎨 SD models not downloaded (~4GB).";
       if (dlBtn) dlBtn.style.display = "";
-    } else if (checked.value === "openai" && !openaiAvailable) {
-      warning.hidden = false;
-      if (warningText) warningText.textContent = "☁️ OpenAI API key not configured. Set OPENAI_API_KEY env var.";
-      if (dlBtn) dlBtn.style.display = "none";
     } else {
       warning.hidden = true;
     }
@@ -309,7 +293,6 @@ function bindEvents() {
 
   // Check SD + OpenAI status on page load
   checkSdStatus();
-  checkOpenaiStatus();
   // Undo + Clear (paint mode)
   $("#inpaint-undo").addEventListener("click", undoMaskStroke);
   $("#inpaint-clear").addEventListener("click", clearMask);

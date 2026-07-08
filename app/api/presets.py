@@ -43,15 +43,6 @@ PRESETS: dict[str, dict] = {
             filters=FiltersRequest(enabled=True, sepia=True, vignette_strength=0.6, contrast=1.1),
         ),
     },
-    "minimal": {
-        "label": "✨ Minimal",
-        "description": "Background remove only (transparent PNG output)",
-        "settings": ProcessRequest(
-            background=BackgroundRequest(enabled=True, mode="remove"),
-            grain=GrainRequest(enabled=False),
-            upscale=UpscaleRequest(enabled=False),
-        ),
-    },
 }
 
 

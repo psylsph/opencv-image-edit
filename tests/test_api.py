@@ -86,11 +86,11 @@ class TestHealthEndpoint:
 class TestPresetsEndpoint:
     """Tests for the ``GET /presets`` endpoint."""
 
-    def test_presets_endpoint_returns_4_presets(self, test_client: TestClient):
+    def test_presets_endpoint_returns_3_presets(self, test_client: TestClient):
         response = test_client.get("/presets")
         assert response.status_code == 200
         body = response.json()
-        assert set(body.keys()) == {"portrait", "landscape", "vintage", "minimal"}
+        assert set(body.keys()) == {"portrait", "landscape", "vintage"}
 
     def test_presets_have_label_and_description(self, test_client: TestClient):
         response = test_client.get("/presets")
@@ -126,17 +126,6 @@ class TestPresetsEndpoint:
         assert settings["grain"]["intensity"] > 0.0
         assert settings["filters"]["enabled"] is True
         assert settings["filters"]["sepia"] is True
-
-    def test_presets_minimal_has_remove_enabled(self, test_client: TestClient):
-        response = test_client.get("/presets")
-        minimal = response.json()["minimal"]
-        settings = minimal["settings"]
-        assert settings["background"]["enabled"] is True
-        assert settings["background"]["mode"] == "remove"
-        # No upscale, no grain, no filters — transparency only
-        assert settings["upscale"]["enabled"] is False
-        assert settings["grain"]["enabled"] is False
-        assert settings["filters"]["enabled"] is False
 
     def test_presets_settings_are_valid_process_requests(
         self, test_client: TestClient

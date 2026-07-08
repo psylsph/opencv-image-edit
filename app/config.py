@@ -47,11 +47,6 @@ class Settings(BaseSettings):
     blur_strength_max: int = Field(default=50, gt=0, le=50)
     grain_intensity_max: float = Field(default=1.0, gt=0.0, le=2.0)
 
-    # OpenAI (cloud generative inpaint)
-    openai_api_key: str = ""
-    openai_model: str = "gpt-image-1"
-    openai_base_url: str = "https://api.openai.com/v1"
-
     # App metadata
     app_version: str = "1.2.0"
     app_name: str = "opencv-image-edit"
