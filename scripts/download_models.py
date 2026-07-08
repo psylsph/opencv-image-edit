@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -79,30 +80,66 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _download(url: str, dest: Path) -> None:
-    """Stream-download url to dest, printing progress."""
+def _download(url: str, dest: Path, max_retries: int = 10) -> None:
+    """Stream-download url to dest with resume + retry support."""
     print(f"  Downloading {url}")
     print(f"  -> {dest}")
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "opencv-image-edit/1.0"})
-        with urllib.request.urlopen(req, timeout=300) as resp:
-            total = int(resp.headers.get("Content-Length", 0))
-            downloaded = 0
-            with dest.open("wb") as f:
-                while True:
-                    chunk = resp.read(CHUNK_SIZE)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if total:
-                        pct = 100 * downloaded / total
-                        mb = downloaded / 1024 / 1024
-                        total_mb = total / 1024 / 1024
-                        print(f"    {mb:6.1f} / {total_mb:6.1f} MB  ({pct:5.1f}%)", end="\r")
-            print()  # newline after progress
-    except urllib.error.URLError as exc:
-        raise SystemExit(f"ERROR: failed to download {url}: {exc}") from exc
+    for attempt in range(1, max_retries + 1):
+        # Resume from existing partial file
+        existing = dest.stat().st_size if dest.exists() else 0
+        headers = {"User-Agent": "opencv-image-edit/1.0"}
+        if existing:
+            headers["Range"] = f"bytes={existing}-"
+            print(f"  Resuming from {existing / 1024 / 1024:.1f} MB")
+
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                # Get total size from headers
+                if resp.status == 206:
+                    # Partial content — total is existing + content range
+                    cr = resp.headers.get("Content-Range", "")
+                    if "/" in cr:
+                        total = int(cr.split("/")[-1])
+                    else:
+                        total = existing + int(resp.headers.get("Content-Length", 0))
+                else:
+                    # Server didn't support Range — start fresh
+                    if existing:
+                        existing = 0
+                    total = int(resp.headers.get("Content-Length", 0))
+
+                downloaded = existing
+                mode = "ab" if existing and resp.status == 206 else "wb"
+                if mode == "wb":
+                    downloaded = 0
+                with dest.open(mode) as f:
+                    while True:
+                        try:
+                            chunk = resp.read(CHUNK_SIZE)
+                        except TimeoutError:
+                            print(f"\n  Read timeout, flushing and retrying... ({attempt}/{max_retries})")
+                            f.flush()
+                            break
+                        if not chunk:
+                            return  # done!
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total and downloaded % (10 * 1024 * 1024) < CHUNK_SIZE:
+                            pct = 100 * downloaded / total
+                            mb = downloaded / 1024 / 1024
+                            total_mb = total / 1024 / 1024
+                            print(f"    {mb:6.1f} / {total_mb:6.1f} MB  ({pct:5.1f}%)")
+                    else:
+                        # Loop ended normally (chunk empty)
+                        return
+            # If we broke out of inner loop due to timeout, retry
+            print(f"  Retry {attempt}/{max_retries}...")
+            time.sleep(2 * attempt)
+        except (urllib.error.URLError, ConnectionResetError, TimeoutError, OSError) as exc:
+            print(f"\n  Error: {exc} — retry {attempt}/{max_retries}...")
+            time.sleep(min(2 * attempt, 30))
+    raise SystemExit(f"ERROR: failed to download {url} after {max_retries} retries")
 
 
 def _verify(path: Path, expected_sha256: str) -> bool:
