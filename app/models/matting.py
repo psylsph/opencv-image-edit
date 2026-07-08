@@ -1,18 +1,20 @@
-"""U2NetP ONNX matting model wrapper using OpenCV DNN.
+"""U2NetP ONNX matting model wrapper using ONNX Runtime.
 
-Loads a U2NetP portrait matting model via cv2.dnn.readNetFromONNX and runs
-inference on a BGR image, returning a single-channel float32 mask in [0, 1].
+Loads a U2NetP portrait matting model via ONNX Runtime and runs inference
+on a BGR image, returning a single-channel float32 mask in [0, 1].
 
-We deliberately do NOT depend on onnxruntime/rembg — the OpenCV DNN module
-is bundled with the base opencv-python wheel and is plenty fast for a
-4.7 MB model on CPU.
+All models in this app use ONNX Runtime for consistency — it avoids the
+OpenCV 5 graph engine's incomplete operator support and gives us a single,
+optimized inference path.
 """
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Lock
 
 import cv2
 import numpy as np
+import onnxruntime as ort
 
 from app.exceptions import ModelNotFoundError
 
@@ -23,7 +25,7 @@ _STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 
 class MattingModel:
-    """U2NetP portrait matting via cv2.dnn.
+    """U2NetP portrait matting via ONNX Runtime.
 
     The model is single-channel output: each pixel is foreground probability.
     """
@@ -32,16 +34,18 @@ class MattingModel:
         self.model_path = Path(model_path).expanduser().resolve()
         if not self.model_path.exists():
             raise ModelNotFoundError(f"matting model not found: {self.model_path}")
-        self._net = cv2.dnn.readNetFromONNX(str(self.model_path))
-        self._net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-        self._net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+        so = ort.SessionOptions()
+        so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        so.intra_op_num_threads = 0  # 0 = use all available cores
+        self._session = ort.InferenceSession(
+            str(self.model_path), sess_options=so, providers=["CPUExecutionProvider"]
+        )
 
     def predict(self, img_bgr: np.ndarray) -> np.ndarray:
         """Run matting on a BGR image, return float32 mask (H, W) in [0, 1].
 
         The U2NetP ONNX (from rembg) outputs a (1, 1, 320, 320) probability
-        mask in [0, 1] — no sigmoid needed. cv2.dnn collapses the multi-output
-        U^2-Net graph into a single tensor.
+        mask in [0, 1] — no sigmoid needed.
         """
         h, w = img_bgr.shape[:2]
         # BGR -> RGB, resize, normalize (ImageNet stats, [0,1] pixel range)
@@ -50,8 +54,9 @@ class MattingModel:
         normalized = (resized - _MEAN) / _STD
         # HWC -> NCHW
         blob = normalized.transpose(2, 0, 1)[np.newaxis, :, :, :]
-        self._net.setInput(blob)
-        out = self._net.forward()  # shape (1, 1, 320, 320), values in [0, 1]
+        # Run inference via ORT
+        input_name = self._session.get_inputs()[0].name
+        out = self._session.run(None, {input_name: blob})[0]
         mask = out[0, 0]  # (320, 320) float32, already a probability
         # Resize to original
         mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_LINEAR)
@@ -59,15 +64,27 @@ class MattingModel:
 
 
 _singleton: MattingModel | None = None
+_lock = Lock()
 
 
 def get_matting_model(model_dir: Path | str | None = None) -> MattingModel:
-    """Get the cached matting model singleton."""
+    """Get the cached matting model singleton (thread-safe)."""
     global _singleton
-    if _singleton is None:
+    if _singleton is not None:
+        return _singleton
+    with _lock:
+        if _singleton is not None:
+            return _singleton
         if model_dir is None:
             from app.config import get_settings
             model_dir = get_settings().model_dir
         model_path = Path(model_dir) / "u2netp.onnx"
         _singleton = MattingModel(model_path)
-    return _singleton
+        return _singleton
+
+
+def clear_matting_cache() -> None:
+    """Reset the singleton (used by tests)."""
+    global _singleton
+    with _lock:
+        _singleton = None
