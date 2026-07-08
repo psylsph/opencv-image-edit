@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f0f12" />
+  <meta name="description" content="Mobile-first AI image editor — background, grain, upscale, filters. On-device." />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>OpenCV Image Editor</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="style.css?v=1" />
+</head>
+<body>
+  <main class="app">
+    <header class="app-header">
+      <h1>🎨 OpenCV Image Editor</h1>
+      <p class="subtitle">AI background • Film grain • 4× upscale</p>
+    </header>
+
+    <section class="upload-section" aria-label="Upload image">
+      <label for="file-input" class="file-label">
+        <span class="file-label-icon" aria-hidden="true">📷</span>
+        <span class="file-label-text">Tap to upload or take photo</span>
+        <span class="file-label-hint">PNG, JPEG, HEIC, WebP • max 10MB</span>
+      </label>
+      <input id="file-input" type="file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif" capture="environment" hidden />
+      <div id="preview-container" hidden>
+        <img id="preview" alt="Uploaded preview" />
+        <button id="clear-btn" class="btn btn-secondary" type="button" aria-label="Clear uploaded image">✕ Clear</button>
+      </div>
+    </section>
+
+    <section class="presets-section" aria-label="Quick presets">
+      <h2 class="section-title">Quick Presets</h2>
+      <div class="preset-pills" id="preset-pills" role="tablist">
+        <!-- pills populated by app.js -->
+      </div>
+      <p class="preset-description" id="preset-description">Custom settings</p>
+    </section>
+
+    <section class="controls-section" aria-label="Image processing controls">
+      <details class="control-group" id="bg-group" open>
+        <summary>
+          <span class="control-icon" aria-hidden="true">🌫️</span>
+          <span>Background</span>
+          <label class="switch" aria-label="Enable background processing">
+            <input type="checkbox" id="bg-enabled" />
+            <span class="slider-toggle"></span>
+          </label>
+        </summary>
+        <div class="control-body">
+          <fieldset class="segmented" id="bg-mode">
+            <legend class="sr-only">Background mode</legend>
+            <label><input type="radio" name="bg-mode" value="blur" checked /><span>Blur</span></label>
+            <label><input type="radio" name="bg-mode" value="remove" /><span>Remove</span></label>
+          </fieldset>
+          <label class="slider-row" id="blur-strength-row">
+            <span>Blur strength <output id="blur-value">15</output></span>
+            <input type="range" id="blur-strength" min="1" max="50" value="15" />
+          </label>
+        </div>
+      </details>
+
+      <details class="control-group" id="grain-group">
+        <summary>
+          <span class="control-icon" aria-hidden="true">🎬</span>
+          <span>Film Grain</span>
+          <label class="switch" aria-label="Enable film grain">
+            <input type="checkbox" id="grain-enabled" />
+            <span class="slider-toggle"></span>
+          </label>
+        </summary>
+        <div class="control-body">
+          <label class="slider-row">
+            <span>Intensity <output id="grain-value">0.4</output></span>
+            <input type="range" id="grain-intensity" min="0" max="1" step="0.05" value="0.4" />
+          </label>
+        </div>
+      </details>
+
+      <details class="control-group" id="upscale-group">
+        <summary>
+          <span class="control-icon" aria-hidden="true">🔍</span>
+          <span>Upscale</span>
+          <label class="switch" aria-label="Enable upscaling">
+            <input type="checkbox" id="upscale-enabled" />
+            <span class="slider-toggle"></span>
+          </label>
+        </summary>
+        <div class="control-body">
+          <fieldset class="segmented" id="upscale-scale">
+            <legend class="sr-only">Scale factor</legend>
+            <label><input type="radio" name="upscale-scale" value="1" /><span>1×</span></label>
+            <label><input type="radio" name="upscale-scale" value="2" checked /><span>2×</span></label>
+            <label><input type="radio" name="upscale-scale" value="4" /><span>4×</span></label>
+          </fieldset>
+          <label class="select-row">
+            <span>Algorithm</span>
+            <select id="upscale-algorithm">
+              <option value="interp" selected>Fast (LANCZOS)</option>
+              <option value="edsr">Best (EDSR, slow)</option>
+              <option value="espcn">Balanced (ESPCN)</option>
+            </select>
+          </label>
+        </div>
+      </details>
+
+      <details class="control-group" id="filters-group">
+        <summary>
+          <span class="control-icon" aria-hidden="true">🎨</span>
+          <span>Color Filters</span>
+          <label class="switch" aria-label="Enable color filters">
+            <input type="checkbox" id="filters-enabled" />
+            <span class="slider-toggle"></span>
+          </label>
+        </summary>
+        <div class="control-body">
+          <label class="slider-row">
+            <span>Brightness <output id="brightness-value">1.0</output></span>
+            <input type="range" id="brightness" min="0" max="2" step="0.05" value="1.0" />
+          </label>
+          <label class="slider-row">
+            <span>Contrast <output id="contrast-value">1.0</output></span>
+            <input type="range" id="contrast" min="0" max="2" step="0.05" value="1.0" />
+          </label>
+          <label class="slider-row">
+            <span>Saturation <output id="saturation-value">1.0</output></span>
+            <input type="range" id="saturation" min="0" max="2" step="0.05" value="1.0" />
+          </label>
+          <label class="slider-row">
+            <span>Sharpness <output id="sharpness-value">1.0</output></span>
+            <input type="range" id="sharpness" min="0" max="2" step="0.05" value="1.0" />
+          </label>
+          <label class="slider-row">
+            <span>Vignette <output id="vignette-value">0.0</output></span>
+            <input type="range" id="vignette" min="0" max="1" step="0.05" value="0" />
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" id="sepia" />
+            <span>Sepia tone</span>
+          </label>
+        </div>
+      </details>
+    </section>
+
+    <section class="action-section">
+      <button id="process-btn" class="btn btn-primary" type="button" disabled>
+        🚀 Process Image
+      </button>
+      <button id="reset-btn" class="btn btn-ghost" type="button">
+        🔄 Reset to Defaults
+      </button>
+    </section>
+
+    <section class="output-section" id="output-section" hidden aria-label="Processed output">
+      <div class="status-bar" id="status-bar" role="status" aria-live="polite"></div>
+      <div class="output-tabs" role="tablist">
+        <button class="tab active" data-tab="final" role="tab">✨ Result</button>
+        <button class="tab" data-tab="before_after" role="tab">🔄 Before/After</button>
+        <button class="tab" data-tab="diff" role="tab">🔍 Diff</button>
+        <button class="tab" data-tab="mask" role="tab">🌫️ Mask</button>
+        <button class="tab" data-tab="grain" role="tab">🎬 Grain</button>
+        <button class="tab" data-tab="upscaled" role="tab">🔍 Upscaled</button>
+      </div>
+      <div class="output-panes">
+        <div class="output-pane active" data-pane="final">
+          <img id="out-final" alt="Processed result" />
+        </div>
+        <div class="output-pane" data-pane="before_after">
+          <img id="out-before_after" alt="Before/after comparison" />
+        </div>
+        <div class="output-pane" data-pane="diff">
+          <img id="out-diff" alt="Difference visualization" />
+        </div>
+        <div class="output-pane" data-pane="mask">
+          <img id="out-mask" alt="Matting mask" />
+        </div>
+        <div class="output-pane" data-pane="grain">
+          <img id="out-grain" alt="Grain visualization" />
+        </div>
+        <div class="output-pane" data-pane="upscaled">
+          <img id="out-upscaled" alt="Upscaled intermediate" />
+        </div>
+      </div>
+      <div class="output-meta" id="output-meta"></div>
+    </section>
+
+    <footer class="app-footer">
+      <details>
+        <summary>About</summary>
+        <p>Mobile-first AI image editor. Powered by OpenCV 5 + U2NetP + EDSR.</p>
+        <p>All processing happens on-device. No images are uploaded to a third party.</p>
+      </details>
+    </footer>
+  </main>
+
+  <script type="module" src="app.js?v=1"></script>
+</body>
+</html>
