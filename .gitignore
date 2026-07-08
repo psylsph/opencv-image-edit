@@ -20,6 +20,7 @@ env/
 models/*.onnx
 models/*.pb
 models/*.h5
+models/sd-inpainting/
 !models/.gitkeep
 
 # IDE
