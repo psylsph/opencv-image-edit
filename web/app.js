@@ -138,6 +138,14 @@ function bindEvents() {
     }
   });
 
+  // Auto-expand a section's <details> when its toggle is switched on
+  $$(".control-group summary input[type='checkbox']").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      const details = cb.closest("details");
+      if (details && cb.checked) details.open = true;
+    });
+  });
+
   // Inpaint (object removal) toggle
   $("#inpaint-enabled").addEventListener("change", (e) => {
     state.mask.enabled = e.target.checked;
