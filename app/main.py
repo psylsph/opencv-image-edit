@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import health, inpaint, presets, process
+from app.api import health, inpaint, presets, process, segment
 from app.config import get_settings
 from app.exceptions import AppError
 from app.monitoring import metrics_response, start_metrics_server
@@ -45,6 +45,7 @@ def create_app() -> FastAPI:
     app.include_router(presets.router)
     app.include_router(process.router)
     app.include_router(inpaint.router)
+    app.include_router(segment.router)
 
     # Metrics
     @app.get("/metrics")

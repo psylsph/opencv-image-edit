@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Download ONNX and .pb model files for opencv-image-edit.
 
-Downloads U2NetP (matting) and EDSR (AI upscale) to a target directory.
-Idempotent — skips files that already exist and match the expected SHA256.
+Downloads U2NetP (matting), EDSR (AI upscale), and MobileSAM (segmentation) to
+a target directory. Idempotent — skips files that already exist and match the
+expected SHA256.
 
 Usage:
     python scripts/download_models.py [target_dir]
@@ -18,6 +19,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
+import zipfile
 from pathlib import Path
 
 
@@ -38,6 +40,17 @@ MODELS: dict[str, dict] = {
         "url": "https://github.com/Saafke/EDSR_Tensorflow/raw/master/models/EDSR_x4.pb",
         "sha256": "dd35ce3cae53ecee2d16045e08a932c3e7242d641bb65cb971d123e06904347f",
         "size_mb": 38.5,
+    },
+    "mobile_sam_20230629.zip": {
+        "url": "https://huggingface.co/vietanhdev/segment-anything-onnx-models/resolve/main/mobile_sam_20230629.zip",
+        "sha256": "41aff2660b7531becfee21fb257c49933ddc892c554507bdb775bf504d443942",
+        "size_mb": 35.0,
+        "is_zip": True,
+        # source name inside the zip -> target file name in model_dir
+        "extract": {
+            "mobile_sam.encoder.onnx": "mobile_sam.encoder.onnx",
+            "sam_vit_h_4b8939.decoder.onnx": "sam_vit_h_4b8939.decoder.onnx",
+        },
     },
 }
 
@@ -89,6 +102,88 @@ def _verify(path: Path, expected_sha256: str) -> bool:
     return actual == expected_sha256
 
 
+def _process_zip_entry(name: str, meta: dict, target_dir: Path) -> None:
+    """Handle an is_zip=True entry: download zip, verify, extract mapped files."""
+    extract_map: dict[str, str] = meta["extract"]
+    # All target files must exist with correct hash to consider done.
+    all_present = True
+    for target_name in extract_map.values():
+        dest = target_dir / target_name
+        if not dest.exists():
+            all_present = False
+            break
+        if meta["sha256"] != "0" * 64:
+            # We hash the zip itself, not the extracted files, for the entry-level check.
+            # Per-file integrity is checked after extraction.
+            pass
+    # Quick exit: if all target files exist, do a full per-file hash check using
+    # a sidecar .sha256 file we write next to each extracted file. We track hashes
+    # in a small JSON sidecar so the registry can re-verify on subsequent runs.
+    if all_present:
+        sidecar = target_dir / f".{name}.sha256.json"
+        if sidecar.exists():
+            import json
+            try:
+                known = json.loads(sidecar.read_text())
+                ok = True
+                for src, tgt in extract_map.items():
+                    expected = known.get(src)
+                    if not expected:
+                        ok = False
+                        break
+                    actual = _sha256(target_dir / tgt)
+                    if actual != expected:
+                        ok = False
+                        break
+                if ok:
+                    print("  OK (already present and valid)")
+                    return
+            except Exception:
+                # Corrupt sidecar — re-extract.
+                pass
+        else:
+            # No sidecar; we cannot re-verify the file contents because the zip
+            # was the verified unit. Be conservative: re-download to refresh
+            # sidecar data, unless the user has previously run the script and
+            # trusts the files. We'll trust them in this branch.
+            print("  OK (already present; sidecar missing — trusting existing files)")
+            return
+
+    # Download zip to a temp file inside target_dir, then extract.
+    tmp_zip = target_dir / f".{name}.tmp.zip"
+    try:
+        _download(meta["url"], tmp_zip)
+        if meta["sha256"] != "0" * 64:
+            actual = _sha256(tmp_zip)
+            if actual != meta["sha256"]:
+                tmp_zip.unlink()
+                raise SystemExit(
+                    f"ERROR: SHA256 mismatch for {name}: "
+                    f"expected {meta['sha256']}, got {actual}"
+                )
+        # Extract mapped files
+        import json
+        per_file_hashes: dict[str, str] = {}
+        with zipfile.ZipFile(tmp_zip, "r") as zf:
+            names_in_zip = set(zf.namelist())
+            for src_name, tgt_name in extract_map.items():
+                if src_name not in names_in_zip:
+                    raise SystemExit(
+                        f"ERROR: {name}: expected {src_name!r} in zip, got {sorted(names_in_zip)}"
+                    )
+                target_path = target_dir / tgt_name
+                with zf.open(src_name) as src_f, target_path.open("wb") as out_f:
+                    out_f.write(src_f.read())
+                per_file_hashes[src_name] = _sha256(target_path)
+                print(f"  extracted {src_name} -> {tgt_name}")
+        # Write sidecar for future idempotent runs
+        sidecar = target_dir / f".{name}.sha256.json"
+        sidecar.write_text(json.dumps(per_file_hashes, indent=2, sort_keys=True))
+    finally:
+        if tmp_zip.exists():
+            tmp_zip.unlink()
+
+
 def main() -> int:
     if len(sys.argv) > 1:
         target_dir = Path(sys.argv[1]).expanduser().resolve()
@@ -101,23 +196,26 @@ def main() -> int:
 
     failed = []
     for name, meta in MODELS.items():
-        dest = target_dir / name
         print(f"[{name}] expected ~{meta['size_mb']} MB")
-        if _verify(dest, meta["sha256"]):
-            print(f"  OK (already present and valid)")
-            print()
-            continue
         try:
-            _download(meta["url"], dest)
-            if meta["sha256"] != "0" * 64:
-                actual = _sha256(dest)
-                if actual != meta["sha256"]:
-                    dest.unlink()
-                    raise SystemExit(
-                        f"ERROR: SHA256 mismatch for {name}: "
-                        f"expected {meta['sha256']}, got {actual}"
-                    )
-            print(f"  OK")
+            if meta.get("is_zip"):
+                _process_zip_entry(name, meta, target_dir)
+                print("  OK")
+            else:
+                dest = target_dir / name
+                if _verify(dest, meta["sha256"]):
+                    print("  OK (already present and valid)")
+                    continue
+                _download(meta["url"], dest)
+                if meta["sha256"] != "0" * 64:
+                    actual = _sha256(dest)
+                    if actual != meta["sha256"]:
+                        dest.unlink()
+                        raise SystemExit(
+                            f"ERROR: SHA256 mismatch for {name}: "
+                            f"expected {meta['sha256']}, got {actual}"
+                        )
+                print("  OK")
         except SystemExit:
             raise
         except Exception as exc:

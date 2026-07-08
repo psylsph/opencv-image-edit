@@ -18,7 +18,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 from download_models import MODELS, _sha256  # noqa: E402
 
-EXPECTED_KEYS = {"u2netp.onnx", "EDSR_x2.pb", "EDSR_x4.pb"}
+EXPECTED_KEYS = {"u2netp.onnx", "EDSR_x2.pb", "EDSR_x4.pb", "mobile_sam_20230629.zip"}
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 PLACEHOLDER = "0" * 64
 
