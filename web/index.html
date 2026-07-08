@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="style.css?v=9" />
+  <link rel="stylesheet" href="style.css?v=10" />
 </head>
 <body>
   <main class="app">
@@ -21,7 +21,7 @@
     </header>
 
     <section class="upload-section" aria-label="Upload image">
-      <button id="upload-btn" class="btn btn-primary upload-btn" type="button">
+      <button id="upload-btn" class="card upload-card" type="button">
         <span class="upload-btn-icon">📷</span>
         <span>Upload or take photo</span>
       </button>
@@ -32,7 +32,7 @@
           <img id="preview" alt="Uploaded preview" />
           <canvas id="mask-canvas" hidden></canvas>
         </div>
-        <button id="clear-btn" class="btn btn-secondary" type="button" aria-label="Clear uploaded image">✕ Clear</button>
+        <button id="clear-btn" class="preview-clear" type="button" aria-label="Clear uploaded image">✕</button>
       </div>
     </section>
 
@@ -188,7 +188,7 @@
           <fieldset class="segmented" id="inpaint-algo">
             <legend class="sr-only">Inpainting algorithm</legend>
             <label><input type="radio" name="inpaint-algo" value="lama" checked /><span>AI</span></label>
-            <label><input type="radio" name="inpaint-algo" value="openai" /><span>☁️ Cloud</span></label>
+            <label><input type="radio" name="inpaint-algo" value="openai" /><span>Cloud</span></label>
             <label><input type="radio" name="inpaint-algo" value="sd" /><span>🎨 Gen</span></label>
             <label><input type="radio" name="inpaint-algo" value="ns" /><span>Smooth</span></label>
             <label><input type="radio" name="inpaint-algo" value="telea" /><span>Fast</span></label>
@@ -198,7 +198,7 @@
             <input type="text" id="inpaint-prompt" placeholder="e.g. green leaves and branches" />
           </label>
           <div id="gen-warning" hidden>
-            <div class="sd-warning-box">
+            <div class="gen-warning-box" id="gen-warning-box">
               <p id="gen-warning-text">🎨 SD models not downloaded (~4GB).</p>
               <button id="sd-download-btn" class="btn btn-primary" type="button">Download</button>
             </div>
@@ -270,6 +270,6 @@
     </footer>
   </main>
 
-  <script type="module" src="app.js?v=9"></script>
+  <script type="module" src="app.js?v=10"></script>
 </body>
 </html>
