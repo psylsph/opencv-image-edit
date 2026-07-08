@@ -1,10 +1,14 @@
-"""Image inpainting (object removal) using OpenCV's built-in algorithms.
+"""Image inpainting (object removal).
 
-Two algorithms are available:
-- cv2.INPAINT_TELEA — Fast Marching Method (Telea 2004), fast, good for small masks
-- cv2.INPAINT_NS — Navier-Stokes fluid dynamics, better quality on large regions
+Three algorithms are available:
+- ``telea`` — Fast Marching Method (Telea 2004), fast, classic cv2 inpaint
+- ``ns``    — Navier-Stokes fluid dynamics, smoother than TELEA, classic cv2 inpaint
+- ``lama``  — LaMa: Resolution-robust Large Mask Inpainting with Fourier
+              Convolutions (WACV 2022). State-of-the-art quality via
+              ONNX model from opencv/inpainting_lama. Default for v1.0.2+.
 
-Both take a uint8 mask where non-zero pixels are the areas to be removed.
+All three take a uint8 mask where non-zero pixels are the areas to be removed.
+The default algorithm is "lama" (highest quality, ~50ms on 512×512 CPU).
 """
 from __future__ import annotations
 
@@ -12,6 +16,7 @@ import cv2
 import numpy as np
 
 from app.exceptions import ValidationError
+from app.models.lama import LaMa
 
 
 SUPPORTED_ALGORITHMS = {
@@ -20,13 +25,14 @@ SUPPORTED_ALGORITHMS = {
 }
 MIN_RADIUS = 1
 MAX_RADIUS = 100
+DEFAULT_ALGORITHM = "lama"
 
 
 def inpaint(
     img: np.ndarray,
     mask: np.ndarray,
     radius: int = 3,
-    algorithm: str = "telea",
+    algorithm: str = DEFAULT_ALGORITHM,
 ) -> np.ndarray:
     """Remove masked regions from the image and fill them in.
 
@@ -36,17 +42,18 @@ def inpaint(
         mask: uint8 single-channel image of the same H, W as img. Non-zero
             pixels mark the area to be removed.
         radius: inpainting neighborhood radius in pixels (1-100). Larger
-            values fill bigger holes but take longer and can blur.
-        algorithm: "telea" (default, fast) or "ns" (slower, smoother).
+            values fill bigger holes but take longer and can blur. Only
+            used by TELEA and NS; ignored by LaMa.
+        algorithm: "lama" (default, best quality), "telea" (fast), or "ns"
+            (smoother classic).
 
     Returns:
         uint8 image, same shape and channel count as input.
     """
-    if radius < MIN_RADIUS or radius > MAX_RADIUS:
-        raise ValidationError(f"radius must be in [{MIN_RADIUS}, {MAX_RADIUS}], got {radius}")
-    if algorithm not in SUPPORTED_ALGORITHMS:
+    if algorithm not in SUPPORTED_ALGORITHMS and algorithm != "lama":
         raise ValidationError(
-            f"unsupported algorithm: {algorithm!r}; choose from {list(SUPPORTED_ALGORITHMS)}"
+            f"unsupported algorithm: {algorithm!r}; "
+            f"choose from {list(SUPPORTED_ALGORITHMS) + ['lama']}"
         )
     if mask.dtype != np.uint8:
         raise ValidationError(f"mask must be uint8, got {mask.dtype}")
@@ -65,7 +72,17 @@ def inpaint(
     else:
         bgr = img
 
-    out = cv2.inpaint(bgr, mask, float(radius), SUPPORTED_ALGORITHMS[algorithm])
+    if algorithm == "lama":
+        # Local singleton lookup (lazy-loads the model on first use)
+        lama = LaMa.get()
+        out = lama.infer(bgr, mask)
+    else:
+        # radius only matters for cv2.inpaint; validate only when relevant
+        if radius < MIN_RADIUS or radius > MAX_RADIUS:
+            raise ValidationError(
+                f"radius must be in [{MIN_RADIUS}, {MAX_RADIUS}], got {radius}"
+            )
+        out = cv2.inpaint(bgr, mask, float(radius), SUPPORTED_ALGORITHMS[algorithm])
 
     if img.ndim == 2:
         return out

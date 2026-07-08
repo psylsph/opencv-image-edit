@@ -20,6 +20,13 @@ def health() -> dict:
         models_status["matting"] = "loaded"
     except Exception as exc:
         models_status["matting"] = f"missing: {exc.__class__.__name__}"
+    # LaMa inpainting model
+    try:
+        from app.models.lama import LaMa
+        LaMa.get(settings.model_dir)
+        models_status["inpaint_lama"] = "loaded"
+    except Exception as exc:
+        models_status["inpaint_lama"] = f"missing: {exc.__class__.__name__}"
     # Upscale models
     from app.pipeline.upscale import Upscaler
     for algo in ("edsr",):

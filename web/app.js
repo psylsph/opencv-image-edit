@@ -169,6 +169,18 @@ function bindEvents() {
   $("#inpaint-radius").addEventListener("input", (e) => {
     $("#inpaint-radius-value").textContent = e.target.value;
   });
+  // Hide fill radius when AI (LaMa) is selected — it doesn't use the param
+  function updateInpaintRadiusVisibility() {
+    const checked = document.querySelector("input[name='inpaint-algo']:checked");
+    if (!checked) return;
+    const isAI = checked.value === "lama";
+    const row = $("#inpaint-radius-row");
+    if (row) row.style.display = isAI ? "none" : "flex";
+  }
+  $$("input[name='inpaint-algo']").forEach((r) => {
+    r.addEventListener("change", updateInpaintRadiusVisibility);
+  });
+  updateInpaintRadiusVisibility();
   // Undo + Clear (paint mode)
   $("#inpaint-undo").addEventListener("click", undoMaskStroke);
   $("#inpaint-clear").addEventListener("click", clearMask);

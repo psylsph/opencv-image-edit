@@ -58,6 +58,13 @@ MODELS: dict[str, dict] = {
         "sha256": "41e49a298099048186ce109a4518286b8972959898a02577414405efa5c3b247",
         "size_mb": 16.5,
     },
+    "inpainting_lama_2025jan.onnx": {
+        # LaMa (Large Mask Inpainting) — official OpenCV packaging.
+        # Used for high-quality object removal (replaces TELEA/NS as default).
+        "url": "https://huggingface.co/opencv/inpainting_lama/resolve/main/inpainting_lama_2025jan.onnx",
+        "sha256": "7df918ac3921d3daf0aae1d219776cf0dc4e4935f035af81841b40adcf74fdf2",
+        "size_mb": 88.3,
+    },
 }
 
 

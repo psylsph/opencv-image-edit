@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import base64
+import time
 
 import cv2
 import numpy as np
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
-from app.exceptions import DecodeError, ValidationError
+from app.exceptions import DecodeError, ModelNotFoundError, ValidationError
+from app.monitoring import image_process_seconds, image_process_total
 from app.pipeline.inpaint import inpaint
 from app.pipeline.io import decode_to_bgr, encode_png
 
@@ -20,9 +22,12 @@ async def inpaint_endpoint(
     file: UploadFile = File(...),
     mask: UploadFile = File(...),
     radius: int = Form(default=3),
-    algorithm: str = Form(default="telea"),
+    algorithm: str = Form(default="lama"),
 ) -> dict:
-    """Remove the masked region and fill it in with surrounding content."""
+    """Remove the masked region and fill it in with surrounding content.
+
+    algorithm: "lama" (default, best quality), "telea" (fast), or "ns" (smoother).
+    """
     img_bytes = await file.read()
     mask_bytes = await mask.read()
 
@@ -42,17 +47,32 @@ async def inpaint_endpoint(
             detail=f"mask shape {mask_img.shape} != image shape {img.shape[:2]}",
         )
 
+    started = time.perf_counter()
+    status = "ok"
     try:
         result = inpaint(img, mask_img, radius=radius, algorithm=algorithm)
+    except ModelNotFoundError as exc:
+        # LaMa model missing — count separately so /health + metrics reflect it
+        image_process_total.labels(status="model_missing").inc()
+        image_process_seconds.labels(status="model_missing").observe(
+            time.perf_counter() - started
+        )
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
+        status = "inpaint_error"
+        image_process_total.labels(status=status).inc()
+        image_process_seconds.labels(status=status).observe(time.perf_counter() - started)
         raise HTTPException(status_code=500, detail=f"inpaint failed: {exc}") from exc
+    image_process_total.labels(status=status).inc()
+    image_process_seconds.labels(status=status).observe(time.perf_counter() - started)
 
     png = encode_png(result)
     return {
         "final": f"data:image/png;base64,{base64.b64encode(png).decode('ascii')}",
         "radius": radius,
         "algorithm": algorithm,
+        "elapsed_seconds": time.perf_counter() - started,
         "output_size": {"width": result.shape[1], "height": result.shape[0]},
     }

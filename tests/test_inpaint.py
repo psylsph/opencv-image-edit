@@ -27,21 +27,21 @@ from app.pipeline.inpaint import inpaint
 def test_inpaint_returns_same_shape_as_input():
     img = np.zeros((200, 300, 3), dtype=np.uint8)
     mask = np.zeros((200, 300), dtype=np.uint8)
-    out = inpaint(img, mask)
+    out = inpaint(img, mask, algorithm="telea")
     assert out.shape == (200, 300, 3)
 
 
 def test_inpaint_dtype_uint8():
     img = np.zeros((50, 50, 3), dtype=np.uint8)
     mask = np.zeros((50, 50), dtype=np.uint8)
-    out = inpaint(img, mask)
+    out = inpaint(img, mask, algorithm="telea")
     assert out.dtype == np.uint8
 
 
 def test_inpaint_handles_grayscale():
     img = np.zeros((80, 80), dtype=np.uint8)
     mask = np.zeros((80, 80), dtype=np.uint8)
-    out = inpaint(img, mask)
+    out = inpaint(img, mask, algorithm="telea")
     assert out.ndim == 2
     assert out.shape == (80, 80)
     assert out.dtype == np.uint8
@@ -51,7 +51,7 @@ def test_inpaint_handles_bgra():
     img = np.zeros((60, 60, 4), dtype=np.uint8)
     img[:, :, 3] = 200  # non-default alpha to verify preservation
     mask = np.zeros((60, 60), dtype=np.uint8)
-    out = inpaint(img, mask)
+    out = inpaint(img, mask, algorithm="telea")
     assert out.shape == (60, 60, 4)
     # Alpha must be preserved unchanged (no inpainting on alpha)
     assert np.array_equal(out[:, :, 3], img[:, :, 3])
@@ -66,7 +66,7 @@ def test_inpaint_unchanged_when_mask_is_empty():
     """All-zero mask means: nothing to inpaint -> output == input (pixel-for-pixel)."""
     img = np.random.RandomState(0).randint(0, 256, (120, 140, 3), dtype=np.uint8)
     mask = np.zeros((120, 140), dtype=np.uint8)
-    out = inpaint(img, mask)
+    out = inpaint(img, mask, algorithm="telea")
     assert np.array_equal(out, img)
 
 
@@ -78,7 +78,7 @@ def test_inpaint_preserves_unmasked_region():
     mask = np.zeros((150, 150), dtype=np.uint8)
     mask[60:90, 60:90] = 255  # only the square is masked
 
-    out = inpaint(img, mask, radius=5)
+    out = inpaint(img, mask, radius=5, algorithm="telea")
 
     # Build a "unmasked" boolean: True where mask == 0
     unmasked = mask == 0
@@ -147,14 +147,14 @@ def test_inpaint_radius_too_small_raises():
     img = np.zeros((50, 50, 3), dtype=np.uint8)
     mask = np.zeros((50, 50), dtype=np.uint8)
     with pytest.raises(ValidationError):
-        inpaint(img, mask, radius=0)
+        inpaint(img, mask, algorithm="telea", radius=0)
 
 
 def test_inpaint_radius_too_large_raises():
     img = np.zeros((50, 50, 3), dtype=np.uint8)
     mask = np.zeros((50, 50), dtype=np.uint8)
     with pytest.raises(ValidationError):
-        inpaint(img, mask, radius=200)
+        inpaint(img, mask, algorithm="telea", radius=200)
 
 
 def test_inpaint_invalid_algorithm_raises():
@@ -162,6 +162,79 @@ def test_inpaint_invalid_algorithm_raises():
     mask = np.zeros((50, 50), dtype=np.uint8)
     with pytest.raises(ValidationError):
         inpaint(img, mask, algorithm="foo")
+
+
+def test_inpaint_lama_default_algorithm(monkeypatch):
+    """Default algorithm must be 'lama' (highest quality, on by default)."""
+    from app.pipeline import inpaint as inpaint_mod
+
+    # Mock LaMa to return the image unchanged (no model needed for this test)
+    class _FakeLaMa:
+        @staticmethod
+        def get():
+            return _FakeLaMa()
+
+        @staticmethod
+        def infer(img, mask):
+            return img.copy()
+
+    monkeypatch.setattr(inpaint_mod, "LaMa", _FakeLaMa)
+
+    img = np.zeros((100, 100, 3), dtype=np.uint8)
+    img[40:60, 40:60, :] = 255
+    mask = np.zeros((100, 100), dtype=np.uint8)
+    mask[40:60, 40:60] = 255
+    # Should NOT raise — just runs the default algorithm.
+    out = inpaint(img, mask)
+    assert out.shape == img.shape
+    assert out.dtype == np.uint8
+
+
+def test_inpaint_lama_dispatches_without_radius_error(monkeypatch):
+    """radius param is only meaningful for TELEA/NS; LaMa path must accept
+    any radius value without raising (it gets ignored)."""
+    from app.pipeline import inpaint as inpaint_mod
+
+    class _FakeLaMa:
+        @staticmethod
+        def get():
+            return _FakeLaMa()
+
+        @staticmethod
+        def infer(img, mask):
+            return img.copy()
+
+    monkeypatch.setattr(inpaint_mod, "LaMa", _FakeLaMa)
+
+    img = np.zeros((100, 100, 3), dtype=np.uint8)
+    img[40:60, 40:60, :] = 255
+    mask = np.zeros((100, 100), dtype=np.uint8)
+    mask[40:60, 40:60] = 255
+    # radius=0 would normally fail TELEA validation, but LaMa ignores it
+    out = inpaint(img, mask, algorithm="lama", radius=0)
+    assert out.shape == img.shape
+    assert out.dtype == np.uint8
+
+
+def test_inpaint_lama_raises_when_model_missing(monkeypatch):
+    """If the LaMa model file doesn't exist, raise ModelNotFoundError."""
+    from app.exceptions import ModelNotFoundError
+    from app.pipeline import inpaint as inpaint_mod
+
+    def _raise(*args, **kwargs):
+        raise ModelNotFoundError("LaMa model not found")
+
+    class _MissingLaMa:
+        get = staticmethod(_raise)
+
+    monkeypatch.setattr(inpaint_mod, "LaMa", _MissingLaMa)
+
+    img = np.zeros((100, 100, 3), dtype=np.uint8)
+    img[40:60, 40:60, :] = 255
+    mask = np.zeros((100, 100), dtype=np.uint8)
+    mask[40:60, 40:60] = 255
+    with pytest.raises(ModelNotFoundError):
+        inpaint(img, mask, algorithm="lama")
 
 
 # ---------------------------------------------------------------------------

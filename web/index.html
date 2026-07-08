@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="style.css?v=8" />
+  <link rel="stylesheet" href="style.css?v=9" />
 </head>
 <body>
   <main class="app">
@@ -187,10 +187,11 @@
 
           <fieldset class="segmented" id="inpaint-algo">
             <legend class="sr-only">Inpainting algorithm</legend>
-            <label><input type="radio" name="inpaint-algo" value="telea" checked /><span>Fast (TELEA)</span></label>
+            <label><input type="radio" name="inpaint-algo" value="lama" checked /><span>AI (LaMa)</span></label>
             <label><input type="radio" name="inpaint-algo" value="ns" /><span>Smooth (NS)</span></label>
+            <label><input type="radio" name="inpaint-algo" value="telea" /><span>Fast (TELEA)</span></label>
           </fieldset>
-          <label class="slider-row">
+          <label class="slider-row" id="inpaint-radius-row">
             <span>Fill radius <output id="inpaint-radius-value">3</output></span>
             <input type="range" id="inpaint-radius" min="1" max="20" step="1" value="3" />
           </label>
@@ -253,6 +254,6 @@
     </footer>
   </main>
 
-  <script type="module" src="app.js?v=8"></script>
+  <script type="module" src="app.js?v=9"></script>
 </body>
 </html>
