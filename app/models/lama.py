@@ -1,4 +1,4 @@
-"""LaMa (Large Mask Inpainting) wrapper using OpenCV's DNN module.
+"""LaMa (Large Mask Inpainting) wrapper using ONNX Runtime.
 
 The model is from the official `opencv/inpainting_lama` Hugging Face repo:
   https://huggingface.co/opencv/inpainting_lama
@@ -8,14 +8,16 @@ periodic structure (brick walls, window grids, etc.) that patch-propagation
 methods (TELEA, NS) cannot. It is the standard modern quality upgrade for
 object removal.
 
+We use ONNX Runtime instead of cv2.dnn because OpenCV 5's new graph engine
+emits a "Targets not supported" warning for this model and silently produces
+incorrect (near-identity) outputs. ORT runs the same model correctly.
+
 This wrapper:
 - Lazy-loads the ONNX model on first use (singleton, thread-safe)
 - Preprocesses: image -> BGR blob scaled 1/255, mask -> binarized 0/1 blob
   Both resized to the model's fixed input size of 512x512.
-- Runs inference via cv2.dnn
+- Runs inference via ONNX Runtime
 - Postprocesses: CHW->HWC, uint8, resize back to original image dimensions
-
-The model takes TWO named inputs: "image" (3 ch) and "mask" (1 ch).
 """
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ from threading import Lock
 
 import cv2
 import numpy as np
+import onnxruntime as ort
 
 from app.exceptions import ModelNotFoundError
 
@@ -39,13 +42,12 @@ class LaMa:
     _lock = Lock()
 
     def __init__(self, model_path: Path | str) -> None:
-        self._model_path = str(model_path)
-        self._net = cv2.dnn.readNetFromONNX(self._model_path)
-        # OpenCV 5 defaults to a new graph engine that doesn't support all
-        # target backends for arbitrary ONNX models yet. The legacy CPU
-        # backend is reliable and adequate for inpainting.
-        self._net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-        self._net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+        so = ort.SessionOptions()
+        so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        so.intra_op_num_threads = 0  # 0 = use all available cores
+        self._session = ort.InferenceSession(
+            str(model_path), sess_options=so, providers=["CPUExecutionProvider"]
+        )
 
     @classmethod
     def get(cls, model_dir: Path | str | None = None) -> "LaMa":
@@ -138,9 +140,6 @@ class LaMa:
         img_blob = self._preprocess(img_bgr)   # (1, 3, 512, 512)
         mask_blob = self._preprocess_mask(mask)  # (1, 1, 512, 512)
 
-        # The model takes two named inputs
-        self._net.setInput(img_blob, "image")
-        self._net.setInput(mask_blob, "mask")
-        out = self._net.forward()  # (1, 3, 512, 512) in [0, 1]
+        out = self._session.run(None, {"image": img_blob, "mask": mask_blob})[0]
 
         return self._postprocess(out, h, w)
