@@ -348,6 +348,11 @@ input[type="range"]:focus::-moz-range-thumb { box-shadow: 0 0 0 3px rgba(110, 16
   flex-direction: column;
   gap: 8px;
   margin: 16px 0;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.4);
   z-index: 10;
 }
 .btn {
