@@ -183,6 +183,110 @@ function bindEvents() {
     r.addEventListener("change", updateInpaintRadiusVisibility);
   });
   updateInpaintRadiusVisibility();
+
+  // --- SD model download management ---
+  let sdAvailable = false;
+  let sdPollTimer = null;
+
+  async function checkSdStatus() {
+    try {
+      const resp = await fetch("/api/v1/sd/status");
+      const data = await resp.json();
+      sdAvailable = data.available;
+      updateSdWarning();
+    } catch {
+      // endpoint not available — assume SD not set up
+    }
+  }
+
+  function updateSdWarning() {
+    const checked = document.querySelector("input[name='inpaint-algo']:checked");
+    if (!checked) return;
+    const warning = $("#sd-warning");
+    if (!warning) return;
+
+    if (checked.value === "sd" && !sdAvailable) {
+      warning.hidden = false;
+    } else {
+      warning.hidden = true;
+    }
+  }
+
+  // Re-check warning visibility when algorithm changes
+  $$("#inpaint-algo input[type='radio']").forEach((r) => {
+    r.addEventListener("change", updateSdWarning);
+  });
+
+  // Download button handler
+  $("#sd-download-btn")?.addEventListener("click", async () => {
+    const btn = $("#sd-download-btn");
+    const progress = $("#sd-progress");
+    const progressText = $("#sd-progress-text");
+    const logEl = $("#sd-log");
+    btn.disabled = true;
+    btn.textContent = "Starting…";
+    progress.hidden = false;
+
+    try {
+      const resp = await fetch("/api/v1/sd/download", { method: "POST" });
+      const data = await resp.json();
+
+      if (!data.started && data.task_id) {
+        // Already running
+        pollSdDownload(data.task_id);
+        return;
+      }
+      if (!data.started) {
+        progressText.textContent = "Error: " + (data.message || "could not start");
+        btn.disabled = false;
+        btn.textContent = "Download";
+        return;
+      }
+      pollSdDownload(data.task_id);
+    } catch (err) {
+      progressText.textContent = "Error: " + err.message;
+      btn.disabled = false;
+      btn.textContent = "Download";
+    }
+  });
+
+  function pollSdDownload(taskId) {
+    const btn = $("#sd-download-btn");
+    const progressText = $("#sd-progress-text");
+    const logEl = $("#sd-log");
+    if (sdPollTimer) clearInterval(sdPollTimer);
+
+    sdPollTimer = setInterval(async () => {
+      try {
+        const resp = await fetch(`/api/v1/sd/download/${taskId}/status`);
+        const data = await resp.json();
+
+        if (data.status === "running") {
+          progressText.textContent = `Downloading… (${data.elapsed_seconds}s)`;
+          logEl.textContent = data.log_tail || "";
+          logEl.scrollTop = logEl.scrollHeight;
+        } else if (data.status === "completed") {
+          clearInterval(sdPollTimer);
+          sdPollTimer = null;
+          progressText.textContent = "✅ Download complete!";
+          sdAvailable = true;
+          updateSdWarning();
+        } else {
+          clearInterval(sdPollTimer);
+          sdPollTimer = null;
+          progressText.textContent = `❌ Download failed (exit ${data.returncode})`;
+          logEl.textContent = data.log_tail || "";
+          btn.disabled = false;
+          btn.textContent = "Retry";
+        }
+      } catch {
+        // network blip — keep polling
+      }
+    }, 5000);
+  }
+
+  // Check SD status on page load
+  checkSdStatus();
   // Undo + Clear (paint mode)
   $("#inpaint-undo").addEventListener("click", undoMaskStroke);
   $("#inpaint-clear").addEventListener("click", clearMask);

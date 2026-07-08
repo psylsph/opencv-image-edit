@@ -241,10 +241,19 @@ def _process_zip_entry(name: str, meta: dict, target_dir: Path) -> None:
 
 
 def main() -> int:
-    if len(sys.argv) > 1:
-        target_dir = Path(sys.argv[1]).expanduser().resolve()
-    else:
-        target_dir = Path(os.environ.get("MODEL_DIR", "./models")).expanduser().resolve()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Download model files")
+    parser.add_argument("target_dir", nargs="?", default=None, help="target directory")
+    parser.add_argument("--base-only", action="store_true", help="skip SD models")
+    parser.add_argument("--sd-only", action="store_true", help="only download SD models")
+    args = parser.parse_args()
+
+    target_dir = (
+        Path(args.target_dir).expanduser().resolve()
+        if args.target_dir
+        else Path(os.environ.get("MODEL_DIR", "./models")).expanduser().resolve()
+    )
 
     target_dir.mkdir(parents=True, exist_ok=True)
     print(f"Target directory: {target_dir}")
@@ -287,10 +296,17 @@ def main() -> int:
     print("All base models downloaded successfully.")
 
     # --- SD models (optional, ~4GB) ---
-    print()
-    print("=" * 60)
-    print("Stable Diffusion 1.5 Inpainting (optional, ~4GB)")
-    print("=" * 60)
+    if args.base_only:
+        print("\nSkipping SD models (--base-only)")
+        return 0
+
+    if args.sd_only:
+        print("\n--sd-only: skipping base models (already downloaded)")
+    else:
+        print()
+        print("=" * 60)
+        print("Stable Diffusion 1.5 Inpainting (optional, ~4GB)")
+        print("=" * 60)
     download_sd_models(target_dir)
 
     return 0

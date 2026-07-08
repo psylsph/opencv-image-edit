@@ -196,6 +196,16 @@
             <span>SD prompt</span>
             <input type="text" id="inpaint-prompt" placeholder="e.g. green leaves and branches" />
           </label>
+          <div id="sd-warning" hidden>
+            <div class="sd-warning-box">
+              <p>🎨 SD models not downloaded (~4GB).</p>
+              <button id="sd-download-btn" class="btn btn-primary" type="button">Download</button>
+            </div>
+            <div id="sd-progress" hidden>
+              <p id="sd-progress-text">Downloading…</p>
+              <pre id="sd-log" class="sd-log"></pre>
+            </div>
+          </div>
           <label class="slider-row" id="inpaint-radius-row">
             <span>Fill radius <output id="inpaint-radius-value">3</output></span>
             <input type="range" id="inpaint-radius" min="1" max="20" step="1" value="3" />
