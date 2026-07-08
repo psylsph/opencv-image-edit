@@ -19,6 +19,22 @@ const state = {
   currentPreset: null,
   processing: false,
   lastResult: null,
+  inpaintResult: null,   // separate from main process result
+  // Mask canvas drawing state
+  mask: {
+    enabled: false,
+    ctx: null,            // 2D rendering context
+    displayW: 0,          // canvas CSS size (matches displayed img)
+    displayH: 0,
+    imageW: 0,            // original image size (for scaling on submit)
+    imageH: 0,
+    brushSize: 24,
+    drawing: false,
+    lastX: 0,
+    lastY: 0,
+    history: [],          // stack of ImageData snapshots (for undo)
+    isDirty: false,       // has user painted anything?
+  },
 };
 
 // --- Defaults (used by Reset and on first load) ---
@@ -115,6 +131,37 @@ function bindEvents() {
     }
   });
 
+  // Inpaint (object removal) toggle
+  $("#inpaint-enabled").addEventListener("change", (e) => {
+    state.mask.enabled = e.target.checked;
+    $("#mask-canvas").hidden = !e.target.checked;
+    if (e.target.checked) {
+      // If canvas hasn't been sized yet (e.g. user toggled before picking file),
+      // we'll set it up on file select. Otherwise just show it.
+      if (state.mask.imageW) setupMaskCanvas();
+    }
+  });
+  // Brush size live update
+  $("#brush-size").addEventListener("input", (e) => {
+    state.mask.brushSize = parseInt(e.target.value, 10);
+    $("#brush-value").textContent = state.mask.brushSize;
+  });
+  // Fill radius output update
+  $("#inpaint-radius").addEventListener("input", (e) => {
+    $("#inpaint-radius-value").textContent = e.target.value;
+  });
+  // Undo + Clear
+  $("#inpaint-undo").addEventListener("click", undoMaskStroke);
+  $("#inpaint-clear").addEventListener("click", clearMask);
+
+  // Canvas pointer events for painting
+  const canvas = $("#mask-canvas");
+  canvas.addEventListener("pointerdown", startMaskStroke);
+  canvas.addEventListener("pointermove", continueMaskStroke);
+  canvas.addEventListener("pointerup", endMaskStroke);
+  canvas.addEventListener("pointerleave", endMaskStroke);
+  canvas.addEventListener("pointercancel", endMaskStroke);
+
   // Slider live output updates
   const sliders = [
     ["#blur-strength", "#blur-value", (v) => v],
@@ -176,14 +223,29 @@ function onFileSelected(e) {
 
   state.file = file;
   state.previewUrl = URL.createObjectURL(file);
-  $("#preview").src = state.previewUrl;
+
+  // Wire up natural-dimension capture for the mask canvas
+  const img = $("#preview");
+  img.src = state.previewUrl;
+  img.onload = () => {
+    state.mask.imageW = img.naturalWidth;
+    state.mask.imageH = img.naturalHeight;
+    if (state.mask.enabled) setupMaskCanvas();
+  };
+
   $("#preview-container").hidden = false;
   $("#upload-btn").hidden = true;
+
+  // Reset mask on new file
+  if (state.mask.ctx) clearMask();
+  state.mask.history = [];
+  state.mask.isDirty = false;
 
   // Clear previous output when a new file is chosen
   $("#output-section").hidden = true;
   setStatus("");
   state.lastResult = null;
+  state.inpaintResult = null;
 
   updateProcessButton();
 }
@@ -201,6 +263,13 @@ function clearFile() {
   $("#output-section").hidden = true;
   setStatus("");
   state.lastResult = null;
+  state.inpaintResult = null;
+  // Reset mask state
+  state.mask.imageW = 0;
+  state.mask.imageH = 0;
+  if (state.mask.ctx) clearMask();
+  state.mask.history = [];
+  state.mask.isDirty = false;
   updateProcessButton();
 }
 
@@ -306,6 +375,160 @@ function setStatus(msg, kind = "") {
   sb.className = "status-bar" + (kind ? ` ${kind}` : "");
 }
 
+// ============================================================================
+// Mask canvas (object-removal painting)
+// ============================================================================
+
+function setupMaskCanvas() {
+  const canvas = $("#mask-canvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  state.mask.ctx = ctx;
+
+  // Size canvas to match the displayed preview image
+  const img = $("#preview");
+  const updateSize = () => {
+    const rect = img.getBoundingClientRect();
+    // Use the rendered display size for the canvas
+    const dpr = window.devicePixelRatio || 1;
+    state.mask.displayW = Math.round(rect.width);
+    state.mask.displayH = Math.round(rect.height);
+    canvas.style.width = rect.width + "px";
+    canvas.style.height = rect.height + "px";
+    canvas.width = Math.round(rect.width * dpr);
+    canvas.height = Math.round(rect.height * dpr);
+    ctx.scale(dpr, dpr);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+  };
+
+  // Run after the image has loaded
+  if (img.complete && img.naturalWidth) {
+    updateSize();
+  } else {
+    img.addEventListener("load", updateSize, { once: true });
+  }
+  // Re-fit on window resize
+  window.addEventListener("resize", () => {
+    if (state.mask.imageW) updateSize();
+  });
+}
+
+function getCanvasCoords(evt) {
+  const canvas = $("#mask-canvas");
+  const rect = canvas.getBoundingClientRect();
+  // pointer events give clientX/Y directly
+  const x = (evt.clientX ?? (evt.touches && evt.touches[0]?.clientX)) - rect.left;
+  const y = (evt.clientY ?? (evt.touches && evt.touches[0]?.clientY)) - rect.top;
+  return { x, y };
+}
+
+function pushMaskHistory() {
+  if (!state.mask.ctx) return;
+  const canvas = $("#mask-canvas");
+  // Limit history to last 20 strokes to bound memory
+  if (state.mask.history.length >= 20) state.mask.history.shift();
+  state.mask.history.push(state.mask.ctx.getImageData(0, 0, canvas.width, canvas.height));
+}
+
+function startMaskStroke(evt) {
+  if (!state.mask.enabled || !state.mask.ctx) return;
+  evt.preventDefault();
+  const { x, y } = getCanvasCoords(evt);
+  state.mask.drawing = true;
+  state.mask.lastX = x;
+  state.mask.lastY = y;
+  pushMaskHistory();
+  paintMaskSegment(x, y, x, y);  // dot
+  state.mask.isDirty = true;
+}
+
+function continueMaskStroke(evt) {
+  if (!state.mask.drawing || !state.mask.ctx) return;
+  evt.preventDefault();
+  const { x, y } = getCanvasCoords(evt);
+  paintMaskSegment(state.mask.lastX, state.mask.lastY, x, y);
+  state.mask.lastX = x;
+  state.mask.lastY = y;
+}
+
+function endMaskStroke() {
+  state.mask.drawing = false;
+}
+
+function paintMaskSegment(x0, y0, x1, y1) {
+  const ctx = state.mask.ctx;
+  // Scale brush from display px to canvas px (we used dpr scale above,
+  // so the context is already in display units)
+  const r = state.mask.brushSize / 2;
+  ctx.lineWidth = state.mask.brushSize;
+  // Translucent red so user can see what they're painting, but the alpha
+  // channel is high enough that the underlying pixels read as "to remove"
+  ctx.strokeStyle = "rgba(255, 60, 60, 0.85)";
+  ctx.fillStyle = "rgba(255, 60, 60, 0.85)";
+  ctx.beginPath();
+  ctx.moveTo(x0, y0);
+  ctx.lineTo(x1, y1);
+  ctx.stroke();
+  // Dot for single taps
+  if (x0 === x1 && y0 === y1) {
+    ctx.beginPath();
+    ctx.arc(x0, y0, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function clearMask() {
+  if (!state.mask.ctx) return;
+  const canvas = $("#mask-canvas");
+  state.mask.ctx.clearRect(0, 0, canvas.width, canvas.height);
+  state.mask.history = [];
+  state.mask.isDirty = false;
+}
+
+function undoMaskStroke() {
+  if (!state.mask.ctx || state.mask.history.length === 0) return;
+  const canvas = $("#mask-canvas");
+  const prev = state.mask.history.pop();
+  state.mask.ctx.putImageData(prev, 0, 0);
+  state.mask.isDirty = state.mask.history.length > 0;
+}
+
+/** Returns a Promise<Blob> PNG of the mask scaled to the original image size.
+ *  Black = keep, white = remove. */
+async function getMaskPngBlob() {
+  const displayCanvas = $("#mask-canvas");
+  // Render the display canvas to an offscreen canvas at original image size
+  const out = document.createElement("canvas");
+  out.width = state.mask.imageW;
+  out.height = state.mask.imageH;
+  const octx = out.getContext("2d");
+  // Black background (keep)
+  octx.fillStyle = "#000000";
+  octx.fillRect(0, 0, out.width, out.height);
+  // The display canvas already contains a red-painted mask. We need to convert
+  // "any non-transparent pixel" -> white. Easiest: draw the display canvas,
+  // then composite the alpha channel as white.
+  octx.drawImage(displayCanvas, 0, 0, out.width, out.height);
+  // Use 'source-in' to keep only pixels where the source had alpha > 0
+  octx.globalCompositeOperation = "source-in";
+  octx.fillStyle = "#ffffff";
+  octx.fillRect(0, 0, out.width, out.height);
+  octx.globalCompositeOperation = "source-over";
+  return new Promise((resolve) => out.toBlob(resolve, "image/png"));
+}
+
+function hasMaskContent() {
+  if (!state.mask.ctx || !state.mask.isDirty) return false;
+  // Quick check: any non-transparent pixel on the display canvas
+  const canvas = $("#mask-canvas");
+  const data = state.mask.ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  for (let i = 3; i < data.length; i += 4) {
+    if (data[i] > 0) return true;
+  }
+  return false;
+}
+
 async function processImage() {
   if (!state.file || state.processing) return;
   state.processing = true;
@@ -314,6 +537,13 @@ async function processImage() {
   $("#output-section").hidden = false;
   // Scroll to output so the user sees the status update
   $("#output-section").scrollIntoView({ behavior: "smooth", block: "start" });
+
+  // Branch: if Remove Object is on AND the user has painted a mask, hit
+  // the dedicated /api/v1/inpaint endpoint (it accepts a separate mask file).
+  if (state.mask.enabled && hasMaskContent()) {
+    await processInpaint();
+    return;
+  }
 
   const settings = collectSettings();
   const formData = new FormData();
@@ -366,9 +596,86 @@ async function processImage() {
   updateProcessButton();
 }
 
+async function processInpaint() {
+  const radius = parseInt($("#inpaint-radius").value, 10);
+  const algorithm = document.querySelector("input[name='inpaint-algo']:checked").value;
+
+  let maskBlob;
+  try {
+    maskBlob = await getMaskPngBlob();
+  } catch (err) {
+    setStatus(`Error preparing mask: ${err.message}`, "error");
+    state.processing = false;
+    updateProcessButton();
+    return;
+  }
+  if (!maskBlob) {
+    setStatus("Error: could not serialize mask", "error");
+    state.processing = false;
+    updateProcessButton();
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("file", state.file);
+  formData.append("mask", maskBlob, "mask.png");
+  formData.append("radius", String(radius));
+  formData.append("algorithm", algorithm);
+
+  let resp;
+  try {
+    resp = await fetch("/api/v1/inpaint", { method: "POST", body: formData });
+  } catch (networkErr) {
+    setStatus(`Network error: ${networkErr.message}`, "error");
+    state.processing = false;
+    updateProcessButton();
+    return;
+  }
+
+  if (!resp.ok) {
+    let errMsg = `HTTP ${resp.status}`;
+    try {
+      const errBody = await resp.json();
+      errMsg = errBody.detail || errBody.message || errMsg;
+    } catch { /* ignore */ }
+    setStatus(`Error: ${errMsg}`, "error");
+    state.processing = false;
+    updateProcessButton();
+    return;
+  }
+
+  let data;
+  try {
+    data = await resp.json();
+  } catch (jsonErr) {
+    setStatus("Error: invalid JSON response", "error");
+    state.processing = false;
+    updateProcessButton();
+    return;
+  }
+
+  // Build a normal-looking result for renderOutputs
+  const w = data.output_size && data.output_size.width;
+  const h = data.output_size && data.output_size.height;
+  const wrapped = {
+    final: data.final,
+    inpainted: data.final,   // also show under the dedicated tab
+    output_size: data.output_size,
+    elapsed_seconds: 0,       // server doesn't return this; show 0
+  };
+  state.lastResult = wrapped;
+  state.inpaintResult = data;
+  renderOutputs(wrapped);
+  const sizeStr = (w && h) ? ` · ${w}×${h}` : "";
+  setStatus(`Inpainted (${algorithm}, r=${radius})${sizeStr}`, "success");
+  state.processing = false;
+  updateProcessButton();
+}
+
 function renderOutputs(data) {
   const map = {
     final: "out-final",
+    inpainted: "out-inpainted",
     before_after: "out-before_after",
     diff: "out-diff",
     mask: "out-mask",
@@ -391,6 +698,7 @@ function renderOutputs(data) {
   // Disable tabs whose data wasn't returned
   const tabAvail = {
     final: !!data.final,
+    inpainted: !!data.inpainted,
     before_after: !!data.before_after,
     diff: !!data.diff,
     mask: !!data.mask,

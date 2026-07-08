@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="style.css?v=5" />
+  <link rel="stylesheet" href="style.css?v=6" />
 </head>
 <body>
   <main class="app">
@@ -28,7 +28,10 @@
       <p class="upload-hint">PNG, JPEG, HEIC, WebP • max 10MB</p>
       <input id="file-input" type="file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif" hidden />
       <div id="preview-container" hidden>
-        <img id="preview" alt="Uploaded preview" />
+        <div class="preview-stack">
+          <img id="preview" alt="Uploaded preview" />
+          <canvas id="mask-canvas" hidden></canvas>
+        </div>
         <button id="clear-btn" class="btn btn-secondary" type="button" aria-label="Clear uploaded image">✕ Clear</button>
       </div>
     </section>
@@ -144,6 +147,37 @@
           </label>
         </div>
       </details>
+
+      <details class="control-group" id="inpaint-group">
+        <summary>
+          <span class="control-icon" aria-hidden="true">✂️</span>
+          <span>Remove Object</span>
+          <label class="switch" aria-label="Enable object removal">
+            <input type="checkbox" id="inpaint-enabled" />
+            <span class="slider-toggle"></span>
+          </label>
+        </summary>
+        <div class="control-body">
+          <p class="control-hint">Drag your finger over the object to remove it. Brush size below.</p>
+          <label class="slider-row">
+            <span>Brush size <output id="brush-value">24</output></span>
+            <input type="range" id="brush-size" min="5" max="80" step="1" value="24" />
+          </label>
+          <fieldset class="segmented" id="inpaint-algo">
+            <legend class="sr-only">Inpainting algorithm</legend>
+            <label><input type="radio" name="inpaint-algo" value="telea" checked /><span>Fast (TELEA)</span></label>
+            <label><input type="radio" name="inpaint-algo" value="ns" /><span>Smooth (NS)</span></label>
+          </fieldset>
+          <label class="slider-row">
+            <span>Fill radius <output id="inpaint-radius-value">3</output></span>
+            <input type="range" id="inpaint-radius" min="1" max="20" step="1" value="3" />
+          </label>
+          <div class="inpaint-buttons">
+            <button id="inpaint-undo" class="btn btn-secondary" type="button">↶ Undo</button>
+            <button id="inpaint-clear" class="btn btn-secondary" type="button">🗑️ Clear</button>
+          </div>
+        </div>
+      </details>
     </section>
 
     <section class="action-section">
@@ -159,6 +193,7 @@
       <div class="status-bar" id="status-bar" role="status" aria-live="polite"></div>
       <div class="output-tabs" role="tablist">
         <button class="tab active" data-tab="final" role="tab">✨ Result</button>
+        <button class="tab" data-tab="inpainted" role="tab">✂️ Removed</button>
         <button class="tab" data-tab="before_after" role="tab">🔄 Before/After</button>
         <button class="tab" data-tab="diff" role="tab">🔍 Diff</button>
         <button class="tab" data-tab="mask" role="tab">🌫️ Mask</button>
@@ -168,6 +203,9 @@
       <div class="output-panes">
         <div class="output-pane active" data-pane="final">
           <img id="out-final" alt="Processed result" />
+        </div>
+        <div class="output-pane" data-pane="inpainted">
+          <img id="out-inpainted" alt="Object removed via inpainting" />
         </div>
         <div class="output-pane" data-pane="before_after">
           <img id="out-before_after" alt="Before/after comparison" />
@@ -197,6 +235,6 @@
     </footer>
   </main>
 
-  <script type="module" src="app.js?v=4"></script>
+  <script type="module" src="app.js?v=6"></script>
 </body>
 </html>
