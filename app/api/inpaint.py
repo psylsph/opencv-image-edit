@@ -31,9 +31,9 @@ async def inpaint_endpoint(
 ) -> dict:
     """Remove the masked region and fill it in with surrounding content.
 
-    algorithm: "lama" (default, fast AI), "sd" (generative AI, slow),
-    "telea" (fast), or "ns" (smoother).
-    prompt: Text description for SD generative fill (algorithm="sd" only).
+    algorithm: "lama" (default, fast AI), "sd" (local generative, slow),
+               "openai" (cloud generative, fast), "telea" (fast), or "ns" (smoother).
+    prompt: Text description for generative fill (algorithm="sd" or "openai").
     """
     img_bytes = await file.read()
     mask_bytes = await mask.read()

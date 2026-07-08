@@ -1,14 +1,16 @@
 """Image inpainting (object removal).
 
-Four algorithms are available:
-- ``telea`` — Fast Marching Method (Telea 2004), fast, classic cv2 inpaint
-- ``ns``    — Navier-Stokes fluid dynamics, smoother than TELEA, classic cv2 inpaint
-- ``lama``  — LaMa: Resolution-robust Large Mask Inpainting with Fourier
-              Convolutions (WACV 2022). Fast AI inpainting. Default.
-- ``sd``    — Stable Diffusion 1.5 Inpainting: generative fill that invents
-              realistic content via text prompt. Slowest (~30-60s CPU).
+Five algorithms are available:
+- ``telea``  — Fast Marching Method (Telea 2004), fast, classic cv2 inpaint
+- ``ns``     — Navier-Stokes fluid dynamics, smoother than TELEA, classic cv2 inpaint
+- ``lama``   — LaMa: Resolution-robust Large Mask Inpainting with Fourier
+               Convolutions (WACV 2022). Fast AI inpainting. Default.
+- ``sd``     — Stable Diffusion 1.5 Inpainting: generative fill that invents
+               realistic content via text prompt. Slowest (~30-120s CPU).
+- ``openai`` — OpenAI Images API (gpt-image-1): cloud generative fill.
+               Fast (~3-10s), high quality, requires API key + internet.
 
-All four take a uint8 mask where non-zero pixels are the areas to be removed.
+All five take a uint8 mask where non-zero pixels are the areas to be removed.
 The default algorithm is "lama" (fast, good quality, ~4s on CPU).
 """
 from __future__ import annotations
@@ -43,15 +45,16 @@ def inpaint(
         img: uint8 image (2D, 3D BGR, or 3D BGRA).
         mask: uint8 single-channel mask, non-zero = to remove.
         radius: Inpainting neighborhood radius (1-100). TELEA/NS only.
-        algorithm: "lama" (default), "sd" (generative), "telea", or "ns".
-        iterations: LaMa passes. Ignored by TELEA/NS/SD.
-        prompt: Text prompt for SD generative fill (algorithm="sd" only).
+        algorithm: "lama" (default), "sd" (local gen), "openai" (cloud gen),
+                   "telea", or "ns".
+        iterations: LaMa passes. Ignored by TELEA/NS/SD/OpenAI.
+        prompt: Text prompt for generative fill (algorithm="sd" or "openai").
 
     Returns:
         uint8 image, same shape and channel count as input.
     """
-    valid_algos = list(SUPPORTED_ALGORITHMS) + ["lama", "sd"]
-    if algorithm not in SUPPORTED_ALGORITHMS and algorithm not in ("lama", "sd"):
+    valid_algos = list(SUPPORTED_ALGORITHMS) + ["lama", "sd", "openai"]
+    if algorithm not in SUPPORTED_ALGORITHMS and algorithm not in ("lama", "sd", "openai"):
         raise ValidationError(
             f"unsupported algorithm: {algorithm!r}; choose from {valid_algos}"
         )
@@ -79,6 +82,10 @@ def inpaint(
         from app.models.sd_inpaint import SDInpaint
         sd = SDInpaint.get()
         out = sd.inpaint(bgr, mask, prompt=prompt or "")
+    elif algorithm == "openai":
+        from app.models.openai_inpaint import OpenAIInpaint
+        oai = OpenAIInpaint()
+        out = oai.inpaint(bgr, mask, prompt=prompt)
     else:
         if radius < MIN_RADIUS or radius > MAX_RADIUS:
             raise ValidationError(
