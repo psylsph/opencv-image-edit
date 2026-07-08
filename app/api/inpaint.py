@@ -27,10 +27,13 @@ async def inpaint_endpoint(
     radius: int = Form(default=3),
     algorithm: str = Form(default="lama"),
     iterations: int = Form(default=1),
+    prompt: str = Form(default=""),
 ) -> dict:
     """Remove the masked region and fill it in with surrounding content.
 
-    algorithm: "lama" (default, best quality), "telea" (fast), or "ns" (smoother).
+    algorithm: "lama" (default, fast AI), "sd" (generative AI, slow),
+    "telea" (fast), or "ns" (smoother).
+    prompt: Text description for SD generative fill (algorithm="sd" only).
     """
     img_bytes = await file.read()
     mask_bytes = await mask.read()
@@ -63,7 +66,8 @@ async def inpaint_endpoint(
     )
 
     try:
-        result = inpaint(img, mask_img, radius=radius, algorithm=algorithm, iterations=iterations)
+        result = inpaint(img, mask_img, radius=radius, algorithm=algorithm,
+                         iterations=iterations, prompt=prompt)
     except ModelNotFoundError as exc:
         # LaMa model missing — count separately so /health + metrics reflect it
         image_process_total.labels(status="model_missing").inc()

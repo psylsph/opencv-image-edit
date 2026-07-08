@@ -173,9 +173,11 @@ function bindEvents() {
   function updateInpaintRadiusVisibility() {
     const checked = document.querySelector("input[name='inpaint-algo']:checked");
     if (!checked) return;
-    const isAI = checked.value === "lama";
+    const val = checked.value;
     const row = $("#inpaint-radius-row");
-    if (row) row.style.display = isAI ? "none" : "flex";
+    const promptRow = $("#inpaint-prompt-row");
+    if (row) row.style.display = (val === "lama" || val === "sd") ? "none" : "flex";
+    if (promptRow) promptRow.style.display = val === "sd" ? "flex" : "none";
   }
   $$("input[name='inpaint-algo']").forEach((r) => {
     r.addEventListener("change", updateInpaintRadiusVisibility);
@@ -804,6 +806,7 @@ async function processImage() {
 async function processInpaint() {
   const radius = parseInt($("#inpaint-radius").value, 10);
   const algorithm = document.querySelector("input[name='inpaint-algo']:checked").value;
+  const prompt = $("#inpaint-prompt") ? $("#inpaint-prompt").value : "";
 
   let maskBlob;
   try {
@@ -826,6 +829,9 @@ async function processInpaint() {
   formData.append("mask", maskBlob, "mask.png");
   formData.append("radius", String(radius));
   formData.append("algorithm", algorithm);
+  if (algorithm === "sd" && prompt) {
+    formData.append("prompt", prompt);
+  }
 
   let resp;
   try {

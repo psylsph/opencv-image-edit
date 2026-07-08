@@ -247,8 +247,64 @@ def main() -> int:
         for name, err in failed:
             print(f"  - {name}: {err}")
         return 1
-    print("All models downloaded successfully.")
+    print("All base models downloaded successfully.")
+
+    # --- SD models (optional, ~4GB) ---
+    print()
+    print("=" * 60)
+    print("Stable Diffusion 1.5 Inpainting (optional, ~4GB)")
+    print("=" * 60)
+    download_sd_models(target_dir)
+
     return 0
+
+
+# --- Stable Diffusion model downloads ---
+
+_SD_REPO = "modularai/stable-diffusion-1.5-onnx"
+_SD_FILES = {
+    "text_encoder/model.onnx": ("text_encoder/model.onnx", 469),
+    "unet/model.onnx": ("unet/model.onnx", 1),
+    "unet/model.onnx_data": ("unet/model.onnx_data", 3278),
+    "vae_encoder/model.onnx": ("vae_encoder/model.onnx", 130),
+    "vae_decoder/model.onnx": ("vae_decoder/model.onnx", 188),
+    "tokenizer/vocab.json": ("tokenizer/vocab.json", 1),
+    "tokenizer/merges.txt": ("tokenizer/merges.txt", 1),
+    "tokenizer/tokenizer_config.json": ("tokenizer/tokenizer_config.json", 1),
+    "tokenizer/special_tokens_map.json": ("tokenizer/special_tokens_map.json", 1),
+}
+
+
+def download_sd_models(target_dir: Path) -> None:
+    """Download SD 1.5 ONNX models (~4GB). Optional — LaMa is the default."""
+    sd_dir = target_dir / "sd-inpainting"
+
+    # Check if already downloaded
+    unet_data = sd_dir / "unet" / "model.onnx_data"
+    if unet_data.exists() and unet_data.stat().st_size > 1_000_000_000:
+        print("  SD models already present.")
+        return
+
+    print(f"  Downloading to: {sd_dir}")
+    print(f"  Source: {_SD_REPO}")
+    print(f"  Total: ~4GB (this will take several minutes)")
+    print()
+
+    base_url = f"https://huggingface.co/{_SD_REPO}/resolve/main"
+    for subdir_path, (repo_path, size_mb) in _SD_FILES.items():
+        dest = sd_dir / subdir_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        if dest.exists() and dest.stat().st_size > 1024:
+            print(f"  [{subdir_path}] already present ({dest.stat().st_size / 1024 / 1024:.0f} MB)")
+            continue
+
+        print(f"  [{subdir_path}] downloading (~{size_mb} MB)...")
+        _download(f"{base_url}/{repo_path}", dest)
+        print(f"  [{subdir_path}] OK")
+
+    print()
+    print("  SD models downloaded successfully.")
 
 
 if __name__ == "__main__":

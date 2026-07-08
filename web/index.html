@@ -188,9 +188,14 @@
           <fieldset class="segmented" id="inpaint-algo">
             <legend class="sr-only">Inpainting algorithm</legend>
             <label><input type="radio" name="inpaint-algo" value="lama" checked /><span>AI (LaMa)</span></label>
-            <label><input type="radio" name="inpaint-algo" value="ns" /><span>Smooth (NS)</span></label>
-            <label><input type="radio" name="inpaint-algo" value="telea" /><span>Fast (TELEA)</span></label>
+            <label><input type="radio" name="inpaint-algo" value="sd" /><span>🎨 Gen (SD)</span></label>
+            <label><input type="radio" name="inpaint-algo" value="ns" /><span>Smooth</span></label>
+            <label><input type="radio" name="inpaint-algo" value="telea" /><span>Fast</span></label>
           </fieldset>
+          <label class="slider-row" id="inpaint-prompt-row" style="display:none">
+            <span>SD prompt</span>
+            <input type="text" id="inpaint-prompt" placeholder="e.g. green leaves and branches" />
+          </label>
           <label class="slider-row" id="inpaint-radius-row">
             <span>Fill radius <output id="inpaint-radius-value">3</output></span>
             <input type="range" id="inpaint-radius" min="1" max="20" step="1" value="3" />
