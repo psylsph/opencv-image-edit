@@ -33,6 +33,7 @@ def inpaint(
     mask: np.ndarray,
     radius: int = 3,
     algorithm: str = DEFAULT_ALGORITHM,
+    iterations: int = 1,
 ) -> np.ndarray:
     """Remove masked regions from the image and fill them in.
 
@@ -46,6 +47,9 @@ def inpaint(
             used by TELEA and NS; ignored by LaMa.
         algorithm: "lama" (default, best quality), "telea" (fast), or "ns"
             (smoother classic).
+        iterations: Number of LaMa passes (default 1). Each pass feeds the
+            previous output as input. 2-3 can improve stubborn removals.
+            Ignored by TELEA/NS.
 
     Returns:
         uint8 image, same shape and channel count as input.
@@ -75,7 +79,7 @@ def inpaint(
     if algorithm == "lama":
         # Local singleton lookup (lazy-loads the model on first use)
         lama = LaMa.get()
-        out = lama.infer(bgr, mask)
+        out = lama.infer(bgr, mask, iterations=iterations)
     else:
         # radius only matters for cv2.inpaint; validate only when relevant
         if radius < MIN_RADIUS or radius > MAX_RADIUS:

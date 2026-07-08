@@ -12,12 +12,21 @@ We use ONNX Runtime instead of cv2.dnn because OpenCV 5's new graph engine
 emits a "Targets not supported" warning for this model and silently produces
 incorrect (near-identity) outputs. ORT runs the same model correctly.
 
-This wrapper:
-- Lazy-loads the ONNX model on first use (singleton, thread-safe)
-- Preprocesses: image -> BGR blob scaled 1/255, mask -> binarized 0/1 blob
-  Both resized to the model's fixed input size of 512x512.
-- Runs inference via ONNX Runtime
-- Postprocesses: CHW->HWC, uint8, resize back to original image dimensions
+Crop-based inference strategy
+------------------------------
+Instead of resizing the entire image to 512×512 (which makes small masks
+invisible to the model), we:
+
+1. **Dilate** the mask to ensure full object coverage.
+2. **Crop** a generous region around the mask bounding box at full resolution.
+3. **Resize** only the crop to 512×512 (preserving mask detail).
+4. **Inpaint** via ONNX Runtime, optionally iterating.
+5. **Resize** the result back to crop dimensions.
+6. **Blend** back into the original — replacing only masked pixels with a
+   feathered transition at the boundary.
+
+This gives small masks ~5-10× more pixels in the model's 512×512 input,
+dramatically improving removal quality.
 """
 from __future__ import annotations
 
@@ -33,6 +42,12 @@ from app.exceptions import ModelNotFoundError
 
 _MODEL_FILENAME = "inpainting_lama_2025jan.onnx"
 _INPUT_SIZE = 512  # model expects 512x512 inputs
+
+# Crop-based inference defaults
+_DEFAULT_DILATE_PX = 10
+_DEFAULT_MIN_PAD = 64       # minimum padding around mask bbox (px)
+_DEFAULT_ITERATIONS = 1
+_FEATHER_KERNEL = 7         # Gaussian blur kernel for mask boundary feathering
 
 
 class LaMa:
@@ -120,15 +135,89 @@ class LaMa:
         return hwc_u8
 
     # ------------------------------------------------------------------
+    # Crop geometry helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _compute_crop_bbox(
+        mask: np.ndarray,
+        h: int,
+        w: int,
+        min_pad: int = _DEFAULT_MIN_PAD,
+    ) -> tuple[int, int, int, int]:
+        """Compute crop bounding box (y1, x1, y2, x2) around non-zero mask pixels.
+
+        Adds generous padding: at least half the mask dimension or ``min_pad``
+        pixels, whichever is larger. Clamped to image bounds.
+        """
+        ys, xs = np.where(mask > 0)
+        y_min, y_max = int(ys.min()), int(ys.max())
+        x_min, x_max = int(xs.min()), int(xs.max())
+
+        mask_h = y_max - y_min + 1
+        mask_w = x_max - x_min + 1
+        pad_y = max(mask_h // 2, min_pad)
+        pad_x = max(mask_w // 2, min_pad)
+
+        cy1 = max(0, y_min - pad_y)
+        cy2 = min(h, y_max + pad_y + 1)
+        cx1 = max(0, x_min - pad_x)
+        cx2 = min(w, x_max + pad_x + 1)
+        return cy1, cx1, cy2, cx2
+
+    @staticmethod
+    def _dilate_mask(mask: np.ndarray, dilate_px: int) -> np.ndarray:
+        """Dilate a binary mask by ``dilate_px`` pixels using an elliptical kernel."""
+        if dilate_px <= 0:
+            return mask.copy()
+        ksize = dilate_px * 2 + 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksize, ksize))
+        return cv2.dilate(mask, kernel)
+
+    @staticmethod
+    def _feather_blend(
+        original: np.ndarray,
+        inpainted: np.ndarray,
+        mask: np.ndarray,
+        feather_ksize: int = _FEATHER_KERNEL,
+    ) -> np.ndarray:
+        """Blend inpainted result into original using a feathered mask boundary.
+
+        Inside the mask: use inpainted pixels. Outside: keep original.
+        At the boundary: Gaussian-weighted transition for seamless join.
+        """
+        m = mask.astype(np.float32) / 255.0
+        if feather_ksize > 1:
+            m = cv2.GaussianBlur(m, (feather_ksize, feather_ksize), 0)
+            m = np.clip(m, 0.0, 1.0)
+        m3 = m[:, :, np.newaxis]  # broadcast across 3 channels
+        blended = original.astype(np.float32) * (1.0 - m3) + inpainted.astype(np.float32) * m3
+        return blended.astype(np.uint8)
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def infer(self, img_bgr: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    def infer(
+        self,
+        img_bgr: np.ndarray,
+        mask: np.ndarray,
+        dilate_px: int = _DEFAULT_DILATE_PX,
+        iterations: int = _DEFAULT_ITERATIONS,
+    ) -> np.ndarray:
         """Inpaint img_bgr using the given mask (non-zero = to inpaint).
+
+        Uses crop-based inference: crops a generous region around the mask
+        at full resolution, resizes just the crop to 512×512 for the model,
+        then blends the result back into the original image.
 
         Args:
             img_bgr: BGR uint8 image (H, W, 3).
             mask:    uint8 single-channel mask (H, W), non-zero = hole.
+            dilate_px: Dilate the mask by this many pixels before inference
+                to ensure full object coverage (default 10).
+            iterations: Number of LaMa passes. Each pass feeds the previous
+                output as input. Default 1; 2-3 can improve stubborn removals.
 
         Returns:
             BGR uint8 image of the same shape as img_bgr.
@@ -137,9 +226,41 @@ class LaMa:
             img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_GRAY2BGR)
         h, w = img_bgr.shape[:2]
 
-        img_blob = self._preprocess(img_bgr)   # (1, 3, 512, 512)
-        mask_blob = self._preprocess_mask(mask)  # (1, 1, 512, 512)
+        # Empty mask = no work
+        if not mask.any():
+            return img_bgr.copy()
 
+        # 1. Dilate mask for better coverage
+        work_mask = self._dilate_mask(mask, dilate_px)
+
+        # 2. Compute generous crop around the mask
+        cy1, cx1, cy2, cx2 = self._compute_crop_bbox(work_mask, h, w)
+        crop_img = img_bgr[cy1:cy2, cx1:cx2]
+        crop_mask = work_mask[cy1:cy2, cx1:cx2]
+        crop_h, crop_w = crop_img.shape[:2]
+
+        # 3. Preprocess: resize crop + mask to model's 512x512
+        img_blob = self._preprocess(crop_img)
+        mask_blob = self._preprocess_mask(crop_mask)
+
+        # 4. Run inference (optionally iterative)
         out = self._session.run(None, {"image": img_blob, "mask": mask_blob})[0]
+        result_hwc = out[0].transpose(1, 2, 0)
+        result_u8 = np.clip(result_hwc, 0, 255).astype(np.uint8)
 
-        return self._postprocess(out, h, w)
+        for _i in range(1, iterations):
+            img_blob = self._preprocess(result_u8)
+            out = self._session.run(None, {"image": img_blob, "mask": mask_blob})[0]
+            result_hwc = out[0].transpose(1, 2, 0)
+            result_u8 = np.clip(result_hwc, 0, 255).astype(np.uint8)
+
+        # 5. Resize result back to crop dimensions
+        if result_u8.shape[0] != crop_h or result_u8.shape[1] != crop_w:
+            result_u8 = cv2.resize(result_u8, (crop_w, crop_h), interpolation=cv2.INTER_LINEAR)
+
+        # 6. Blend back: feathered transition at mask boundary
+        blended_crop = self._feather_blend(crop_img, result_u8, crop_mask)
+
+        result = img_bgr.copy()
+        result[cy1:cy2, cx1:cx2] = blended_crop
+        return result

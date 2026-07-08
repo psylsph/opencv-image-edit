@@ -23,6 +23,7 @@ async def inpaint_endpoint(
     mask: UploadFile = File(...),
     radius: int = Form(default=3),
     algorithm: str = Form(default="lama"),
+    iterations: int = Form(default=1),
 ) -> dict:
     """Remove the masked region and fill it in with surrounding content.
 
@@ -50,7 +51,7 @@ async def inpaint_endpoint(
     started = time.perf_counter()
     status = "ok"
     try:
-        result = inpaint(img, mask_img, radius=radius, algorithm=algorithm)
+        result = inpaint(img, mask_img, radius=radius, algorithm=algorithm, iterations=iterations)
     except ModelNotFoundError as exc:
         # LaMa model missing — count separately so /health + metrics reflect it
         image_process_total.labels(status="model_missing").inc()
@@ -73,6 +74,7 @@ async def inpaint_endpoint(
         "final": f"data:image/png;base64,{base64.b64encode(png).decode('ascii')}",
         "radius": radius,
         "algorithm": algorithm,
+        "iterations": iterations,
         "elapsed_seconds": time.perf_counter() - started,
         "output_size": {"width": result.shape[1], "height": result.shape[0]},
     }

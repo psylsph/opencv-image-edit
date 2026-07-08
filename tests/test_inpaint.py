@@ -175,7 +175,7 @@ def test_inpaint_lama_default_algorithm(monkeypatch):
             return _FakeLaMa()
 
         @staticmethod
-        def infer(img, mask):
+        def infer(img, mask, **kwargs):
             return img.copy()
 
     monkeypatch.setattr(inpaint_mod, "LaMa", _FakeLaMa)
@@ -201,7 +201,7 @@ def test_inpaint_lama_dispatches_without_radius_error(monkeypatch):
             return _FakeLaMa()
 
         @staticmethod
-        def infer(img, mask):
+        def infer(img, mask, **kwargs):
             return img.copy()
 
     monkeypatch.setattr(inpaint_mod, "LaMa", _FakeLaMa)
