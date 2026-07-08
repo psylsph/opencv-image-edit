@@ -1,12 +1,24 @@
 """MobileSAM (Segment Anything with TinyViT) wrapper using ONNX Runtime.
 
-Two ONNX models, both in vietanhdev/segment-anything-onnx-models:
+Two ONNX models:
   - mobile_sam.encoder.onnx  (image -> image_embeddings, ~28MB)
-  - sam_vit_h_4b8939.decoder.onnx  (embeddings + points -> masks, ~16MB)
+  - mobile_sam_mask_decoder.onnx  from NVIDIA NanoSAM (embeddings + points
+    -> low_res_masks + iou_predictions, ~16MB). This is the
+    MobileSAM-trained decoder, NOT the SAM-H decoder (which gives
+    near-uniform foreground and is unusable with the TinyViT encoder).
 
-MobileSAM replaces SAM's ViT-H encoder (637M params) with TinyViT (5M params).
-The decoder architecture is the same as SAM, so we use the SAM-H decoder ONNX
-from the vietanhdev export.
+Why this combo matters: the original MobileSAM repo only ships a single
+combined ONNX (encoder + decoder fused). Splitting them is straightforward
+via NVIDIA's nanosam.tools.export_sam_mask_decoder_onnx. The vietanhdev
+HuggingFace repo packages a SAM-H decoder alongside the MobileSAM encoder,
+which produces logits so biased that threshold 0.5 marks 99% of the image
+as foreground — those are incompatible architectures.
+
+The NanoSAM decoder's multi-mask output (1, 4, 256, 256) contains 3
+ambiguity candidates + 1 final combined mask. For single-point prompts
+the 4th ("everything") mask always wins on IoU but is useless, so we pick
+the best of candidates 0..2 by IoU, with a fallback to candidate 3 if all
+have IoU < 0.5.
 """
 from __future__ import annotations
 
@@ -23,6 +35,11 @@ from app.exceptions import ModelNotFoundError
 _MEAN = np.array([123.675, 116.28, 103.53], dtype=np.float32)
 _STD = np.array([58.395, 57.12, 57.375], dtype=np.float32)
 _MODEL_SIZE = 1024
+_MASK_THRESHOLD = 0.5  # probability threshold for binary mask
+
+
+def _sigmoid(x: np.ndarray) -> np.ndarray:
+    return 1.0 / (1.0 + np.exp(-x))
 
 
 class MobileSAM:
@@ -32,8 +49,6 @@ class MobileSAM:
     _lock = Lock()
 
     def __init__(self, encoder_path: Path | str, decoder_path: Path | str) -> None:
-        # CPUExecutionProvider is the only reliable one without GPU; we don't
-        # try CUDA here to keep dependencies small
         so = ort.SessionOptions()
         so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         so.intra_op_num_threads = 0  # 0 = use all available cores
@@ -56,11 +71,11 @@ class MobileSAM:
                 model_dir = get_settings().model_dir
             model_dir = Path(model_dir)
             enc = model_dir / "mobile_sam.encoder.onnx"
-            dec = model_dir / "sam_vit_h_4b8939.decoder.onnx"
+            dec = model_dir / "mobile_sam_mask_decoder.onnx"
             if not enc.exists():
                 raise ModelNotFoundError(f"MobileSAM encoder not found: {enc}")
             if not dec.exists():
-                raise ModelNotFoundError(f"MobileSAM decoder not found: {dec}")
+                raise ModelNotFoundError(f"MobileSAM mask decoder not found: {dec}")
             cls._instance = MobileSAM(enc, dec)
             return cls._instance
 
@@ -101,9 +116,9 @@ class MobileSAM:
         point_labels = np.array([[1]], dtype=np.float32)
         mask_input = np.zeros((1, 1, 256, 256), dtype=np.float32)
         has_mask_input = np.array([0], dtype=np.float32)
-        orig_im_size = np.array([h, w], dtype=np.float32)
 
-        masks, scores, _ = self._decoder.run(
+        out_names = {o.name: o for o in self._decoder.get_outputs()}
+        result = dict(zip(out_names.keys(), self._decoder.run(
             None,
             {
                 "image_embeddings": embeddings,
@@ -111,14 +126,33 @@ class MobileSAM:
                 "point_labels": point_labels,
                 "mask_input": mask_input,
                 "has_mask_input": has_mask_input,
-                "orig_im_size": orig_im_size,
             },
+        )))
+        # NanoSAM decoder outputs: low_res_masks (1, 4, 256, 256) logits
+        # + iou_predictions (1, 4) scores
+        low_res = result["low_res_masks"]      # (1, 4, 256, 256) logits
+        iou = result["iou_predictions"][0]     # (4,)
+
+        # Pick the best of the 3 ambiguity masks (candidates 0..2).
+        # Candidate 3 is the "combined" final output which tends to over-segment
+        # for single-point prompts; only fall back to it if all 3 are bad.
+        best_ambiguity = int(np.argmax(iou[:3]))
+        if iou[best_ambiguity] < 0.5:
+            best_idx = 3
+        else:
+            best_idx = best_ambiguity
+        best_score = float(iou[best_idx])
+
+        # Resize low-res (256x256) logit mask to original image size, then
+        # sigmoid + threshold. Resizing in logit space preserves the relative
+        # magnitude across the mask (standard SAM practice).
+        low_res_mask = low_res[0, best_idx]  # (256, 256) logits
+        resized_logits = cv2.resize(
+            low_res_mask, (w, h), interpolation=cv2.INTER_LINEAR
         )
-        # masks shape: (1, 1, H, W), values in [0, 1] (sigmoid already applied)
-        # scores shape: (1, 1) — only 1 candidate for single-point prompt
-        mask = (masks[0, 0] > 0.5).astype(np.uint8) * 255
-        score = float(scores[0, 0])
-        return mask, score
+        probs = _sigmoid(resized_logits)
+        mask = (probs > _MASK_THRESHOLD).astype(np.uint8) * 255
+        return mask, best_score
 
     @classmethod
     def clear_cache(cls) -> None:

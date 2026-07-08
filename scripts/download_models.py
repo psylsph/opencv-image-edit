@@ -142,12 +142,18 @@ def _process_zip_entry(name: str, meta: dict, target_dir: Path) -> None:
                 # Corrupt sidecar — re-extract.
                 pass
         else:
-            # No sidecar; we cannot re-verify the file contents because the zip
-            # was the verified unit. Be conservative: re-download to refresh
-            # sidecar data, unless the user has previously run the script and
-            # trusts the files. We'll trust them in this branch.
-            print("  OK (already present; sidecar missing — trusting existing files)")
-            return
+            # No sidecar; verify each extracted file's size > 0 to be safe,
+            # then re-extract to refresh sidecar data. This avoids the silent
+            # "trust existing" trap where a partial/corrupt extraction would
+            # never be detected on subsequent runs.
+            all_present = all(
+                (target_dir / tgt_name).exists() and (target_dir / tgt_name).stat().st_size > 0
+                for tgt_name in extract_map.values()
+            )
+            if not all_present:
+                print("  Files missing or empty — re-extracting")
+            else:
+                print("  sidecar missing — re-extracting to refresh metadata")
 
     # Download zip to a temp file inside target_dir, then extract.
     tmp_zip = target_dir / f".{name}.tmp.zip"

@@ -25,8 +25,10 @@ const state = {
     enabled: false,
     mode: "click",          // "click" = SAM point-prompt, "paint" = manual brush
     ctx: null,              // 2D rendering context
-    displayW: 0,            // canvas CSS size (matches displayed img)
+    displayW: 0,            // canvas CSS size (matches RENDERED image, not element box)
     displayH: 0,
+    offsetX: 0,             // letterbox offset within element (object-fit: contain)
+    offsetY: 0,
     imageW: 0,              // original image size (for scaling on submit)
     imageH: 0,
     brushSize: 24,
@@ -407,18 +409,55 @@ function setupMaskCanvas() {
   const ctx = canvas.getContext("2d");
   state.mask.ctx = ctx;
 
-  // Size canvas to match the displayed preview image
+  // Size canvas to match the RENDERED image area, not the element box.
+  // #preview uses object-fit: contain + max-height:400px, so the actual
+  // image may be letterboxed inside the element. If we size the canvas to
+  // the element box, mask coordinates and overlays are misaligned.
   const img = $("#preview");
   const updateSize = () => {
     const rect = img.getBoundingClientRect();
-    // Use the rendered display size for the canvas
+    const elemW = rect.width;
+    const elemH = rect.height;
     const dpr = window.devicePixelRatio || 1;
-    state.mask.displayW = Math.round(rect.width);
-    state.mask.displayH = Math.round(rect.height);
-    canvas.style.width = rect.width + "px";
-    canvas.style.height = rect.height + "px";
-    canvas.width = Math.round(rect.width * dpr);
-    canvas.height = Math.round(rect.height * dpr);
+
+    // Compute rendered image area within the element box (object-fit: contain)
+    let renderedW, renderedH, offsetX, offsetY;
+    if (state.mask.imageW && state.mask.imageH) {
+      const imgRatio = state.mask.imageW / state.mask.imageH;
+      const elemRatio = elemW / elemH;
+      if (imgRatio > elemRatio) {
+        // Wider than box → constrained by width, letterboxed top/bottom
+        renderedW = elemW;
+        renderedH = elemW / imgRatio;
+        offsetX = 0;
+        offsetY = (elemH - renderedH) / 2;
+      } else {
+        // Taller than box → constrained by height, letterboxed left/right
+        renderedH = elemH;
+        renderedW = elemH * imgRatio;
+        offsetX = (elemW - renderedW) / 2;
+        offsetY = 0;
+      }
+    } else {
+      renderedW = elemW;
+      renderedH = elemH;
+      offsetX = 0;
+      offsetY = 0;
+    }
+
+    state.mask.displayW = Math.round(renderedW);
+    state.mask.displayH = Math.round(renderedH);
+    state.mask.offsetX = Math.round(offsetX);
+    state.mask.offsetY = Math.round(offsetY);
+
+    // Position + size canvas to exactly cover the rendered image area
+    canvas.style.width = renderedW + "px";
+    canvas.style.height = renderedH + "px";
+    canvas.style.left = offsetX + "px";
+    canvas.style.top = offsetY + "px";
+    canvas.width = Math.round(renderedW * dpr);
+    canvas.height = Math.round(renderedH * dpr);
+    ctx.setTransform(1, 0, 0, 1, 0, 0); // reset transform before scaling
     ctx.scale(dpr, dpr);
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -530,15 +569,20 @@ async function getMaskPngBlob() {
     return await resp.blob();
   }
   // Paint mode: render the display canvas (with red strokes) into a clean
-  // black/white mask at original image resolution
+  // black/white mask at original image resolution.
+  // Do NOT pre-fill with opaque black — that would make source-in fill the
+  // entire canvas white (every pixel becomes opaque). Instead, draw the
+  // strokes on a transparent background, then convert non-transparent areas
+  // to white via source-in.
   const displayCanvas = $("#mask-canvas");
   const out = document.createElement("canvas");
   out.width = state.mask.imageW;
   out.height = state.mask.imageH;
   const octx = out.getContext("2d");
-  octx.fillStyle = "#000000";
-  octx.fillRect(0, 0, out.width, out.height);
+  // Draw the painted strokes (transparent background + semi-transparent red)
   octx.drawImage(displayCanvas, 0, 0, out.width, out.height);
+  // Convert any painted pixel to opaque white; transparent stays transparent
+  // (which decodes as grayscale 0 = black = keep when cv2 reads it)
   octx.globalCompositeOperation = "source-in";
   octx.fillStyle = "#ffffff";
   octx.fillRect(0, 0, out.width, out.height);
