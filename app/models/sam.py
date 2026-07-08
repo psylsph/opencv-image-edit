@@ -133,14 +133,33 @@ class MobileSAM:
         low_res = result["low_res_masks"]      # (1, 4, 256, 256) logits
         iou = result["iou_predictions"][0]     # (4,)
 
-        # Pick the best of the 3 ambiguity masks (candidates 0..2).
-        # Candidate 3 is the "combined" final output which tends to over-segment
-        # for single-point prompts; only fall back to it if all 3 are bad.
-        best_ambiguity = int(np.argmax(iou[:3]))
-        if iou[best_ambiguity] < 0.5:
-            best_idx = 3
+        # Select the best mask from the 3 ambiguity candidates (0..2).
+        # Candidate 3 is the "everything" mask (near-100% area) — skip it.
+        #
+        # Problem: IoU scores from NanoSAM are biased toward large masks.
+        # Candidate 0 or 2 often covers 75-85% of the image with high IoU,
+        # while the correct tight mask (e.g. 11%) has lower IoU.
+        #
+        # Solution: estimate each candidate's area from the low-res logits,
+        # then pick the highest-IoU candidate whose area is < 50% of the image.
+        # If all candidates exceed 50%, pick the smallest one.
+        _MAX_AREA = 0.50  # reject masks covering > 50% of image
+        candidate_areas = []
+        for i in range(3):
+            small_mask = _sigmoid(low_res[0, i]) > _MASK_THRESHOLD
+            candidate_areas.append(float(small_mask.mean()))
+
+        # Filter to reasonable-area candidates with IoU > 0.5
+        reasonable = [
+            i for i in range(3)
+            if candidate_areas[i] < _MAX_AREA and iou[i] > 0.5
+        ]
+        if reasonable:
+            best_idx = max(reasonable, key=lambda i: iou[i])
         else:
-            best_idx = best_ambiguity
+            # All candidates too large — pick the smallest
+            best_idx = int(np.argmin(candidate_areas[:3]))
+
         best_score = float(iou[best_idx])
 
         # Resize low-res (256x256) logit mask to original image size, then

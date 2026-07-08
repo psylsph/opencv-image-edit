@@ -273,22 +273,38 @@ class LaMa:
                 result_u8, (crop_w, crop_h), interpolation=cv2.INTER_LINEAR,
             )
 
-        # 6. Quality check: detect "black square" failure
-        # A real LaMa failure produces near-uniform black (low mean AND low std).
-        # A legitimately dark region has varied texture (std > 0) — don't
-        # fall back in that case.
+        # 6. Quality check: detect "black square" failure.
+        # Compare LaMa output against the surrounding (non-masked) crop area.
+        # If the masked region is dramatically darker than its surroundings,
+        # the model failed — fall back to TELEA.
         masked_pixels = result_u8[crop_mask > 0]
+        unmasked_pixels = result_u8[crop_mask == 0]
         if masked_pixels.size > 0:
-            is_too_dark = masked_pixels.mean() < _DARKNESS_THRESHOLD
-            is_uniform = masked_pixels.std() < 2.0
-            if is_too_dark and is_uniform:
-                # LaMa produced a uniform black fill — fall back to TELEA.
+            masked_mean = masked_pixels.mean()
+            masked_std = masked_pixels.std()
+            context_mean = unmasked_pixels.mean() if unmasked_pixels.size > 0 else 128.0
+
+            # Failure: masked area is near-uniform black, OR masked area is
+            # dramatically darker than its surroundings (ratio < 0.2).
+            is_uniform_black = masked_mean < _DARKNESS_THRESHOLD and masked_std < 2.0
+            is_absurdly_dark = masked_mean < 15.0 and masked_mean < context_mean * 0.2
+
+            if is_uniform_black or is_absurdly_dark:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "LaMa quality fallback triggered: masked_mean=%.1f std=%.1f "
+                    "context_mean=%.1f — falling back to TELEA",
+                    masked_mean, masked_std, context_mean,
+                )
                 result_u8 = cv2.inpaint(
                     crop_img, crop_mask, 5.0, cv2.INPAINT_TELEA,
                 )
 
-        # 7. Blend back: feathered transition at mask boundary
-        blended_crop = self._feather_blend(crop_img, result_u8, crop_mask)
+        # 7. Blend back: feathered transition at mask boundary.
+        # Use the ORIGINAL (undilated) mask for blending so we only replace
+        # what the user actually masked. The dilated mask was for LaMa context.
+        original_crop_mask = mask[cy1:cy2, cx1:cx2]
+        blended_crop = self._feather_blend(crop_img, result_u8, original_crop_mask)
 
         result = img_bgr.copy()
         result[cy1:cy2, cx1:cx2] = blended_crop

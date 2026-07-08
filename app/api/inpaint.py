@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import time
 
 import cv2
@@ -12,6 +13,8 @@ from app.exceptions import DecodeError, ModelNotFoundError, ValidationError
 from app.monitoring import image_process_seconds, image_process_total
 from app.pipeline.inpaint import inpaint
 from app.pipeline.io import decode_to_bgr, encode_png
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter()
@@ -50,6 +53,15 @@ async def inpaint_endpoint(
 
     started = time.perf_counter()
     status = "ok"
+
+    # Log mask diagnostics for debugging
+    mask_ratio = float((mask_img > 0).mean())
+    logger.info(
+        "inpaint: img=%dx%d mask=%dx%d mask_coverage=%.1f%% algo=%s",
+        img.shape[1], img.shape[0], mask_img.shape[1], mask_img.shape[0],
+        mask_ratio * 100, algorithm,
+    )
+
     try:
         result = inpaint(img, mask_img, radius=radius, algorithm=algorithm, iterations=iterations)
     except ModelNotFoundError as exc:
