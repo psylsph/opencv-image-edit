@@ -90,25 +90,28 @@ img { max-width: 100%; height: auto; display: block; }
 
 /* --- Upload --- */
 .upload-section { margin-bottom: 24px; }
-.file-label {
-  display: flex;
+.upload-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.upload-btn {
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 180px;
-  background: var(--surface);
-  border: 2px dashed var(--border);
-  border-radius: var(--radius);
-  padding: 24px;
-  cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
+  gap: 6px;
+  min-height: 96px;
+  font-size: 15px;
+  padding: 12px 8px;
+}
+.upload-btn-icon {
+  font-size: 32px;
+  line-height: 1;
+}
+.upload-hint {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--fg-dim);
   text-align: center;
 }
-.file-label:hover, .file-label:focus-within { border-color: var(--accent); background: var(--surface-2); }
-.file-label-icon { font-size: 48px; line-height: 1; }
-.file-label-text { font-size: 16px; font-weight: 600; }
-.file-label-hint { font-size: 13px; color: var(--fg-dim); }
 
 #preview-container { position: relative; margin-top: 12px; }
 #preview {

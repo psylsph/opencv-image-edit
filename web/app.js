@@ -70,8 +70,11 @@ function renderPresetPills() {
 }
 
 function bindEvents() {
-  // File input
+  // File inputs (upload = gallery/library, camera = capture)
   $("#file-input").addEventListener("change", onFileSelected);
+  $("#camera-input").addEventListener("change", onFileSelected);
+  $("#upload-btn").addEventListener("click", () => $("#file-input").click());
+  $("#camera-btn").addEventListener("click", () => $("#camera-input").click());
 
   // Clear button
   $("#clear-btn").addEventListener("click", clearFile);
@@ -177,7 +180,7 @@ function onFileSelected(e) {
   state.previewUrl = URL.createObjectURL(file);
   $("#preview").src = state.previewUrl;
   $("#preview-container").hidden = false;
-  $(".file-label").style.display = "none";
+  $(".upload-buttons").hidden = true;
 
   // Clear previous output when a new file is chosen
   $("#output-section").hidden = true;
@@ -194,9 +197,10 @@ function clearFile() {
     state.previewUrl = null;
   }
   $("#file-input").value = "";
+  $("#camera-input").value = "";
   $("#preview").removeAttribute("src");
   $("#preview-container").hidden = true;
-  $(".file-label").style.display = "flex";
+  $(".upload-buttons").hidden = false;
   $("#output-section").hidden = true;
   setStatus("");
   state.lastResult = null;
