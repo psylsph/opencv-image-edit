@@ -46,11 +46,17 @@ MODELS: dict[str, dict] = {
         "sha256": "41aff2660b7531becfee21fb257c49933ddc892c554507bdb775bf504d443942",
         "size_mb": 35.0,
         "is_zip": True,
-        # source name inside the zip -> target file name in model_dir
+        # Only extract the encoder from this zip.
         "extract": {
             "mobile_sam.encoder.onnx": "mobile_sam.encoder.onnx",
-            "sam_vit_h_4b8939.decoder.onnx": "sam_vit_h_4b8939.decoder.onnx",
         },
+    },
+    "mobile_sam_mask_decoder.onnx": {
+        # NanoSAM MobileSAM mask decoder — pairs correctly with the
+        # TinyViT encoder above. NOT the SAM-H decoder from the zip.
+        "url": "https://huggingface.co/dragonSwing/nanosam/resolve/main/mobile_sam_mask_decoder.onnx",
+        "sha256": "41e49a298099048186ce109a4518286b8972959898a02577414405efa5c3b247",
+        "size_mb": 16.5,
     },
 }
 
