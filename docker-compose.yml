@@ -9,7 +9,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: opencv-image-edit:1.0.0
+    image: opencv-image-edit:1.0.1
     container_name: opencv-image-edit
     restart: unless-stopped
     ports:
