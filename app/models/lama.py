@@ -48,6 +48,8 @@ _DEFAULT_DILATE_PX = 10
 _DEFAULT_MIN_PAD = 64       # minimum padding around mask bbox (px)
 _DEFAULT_ITERATIONS = 1
 _FEATHER_KERNEL = 7         # Gaussian blur kernel for mask boundary feathering
+_MAX_MASK_RATIO = 0.35      # mask must cover <35% of crop for good context
+_DARKNESS_THRESHOLD = 15    # mean pixel value below this = "black square" failure
 
 
 class LaMa:
@@ -144,11 +146,14 @@ class LaMa:
         h: int,
         w: int,
         min_pad: int = _DEFAULT_MIN_PAD,
+        max_ratio: float = _MAX_MASK_RATIO,
     ) -> tuple[int, int, int, int]:
         """Compute crop bounding box (y1, x1, y2, x2) around non-zero mask pixels.
 
-        Adds generous padding: at least half the mask dimension or ``min_pad``
-        pixels, whichever is larger. Clamped to image bounds.
+        Padding starts at ``max(mask_dim // 2, min_pad)`` and is expanded if
+        the mask would cover more than ``max_ratio`` of the crop area — this
+        ensures the model always has enough surrounding context. Clamped to
+        image bounds.
         """
         ys, xs = np.where(mask > 0)
         y_min, y_max = int(ys.min()), int(ys.max())
@@ -158,6 +163,16 @@ class LaMa:
         mask_w = x_max - x_min + 1
         pad_y = max(mask_h // 2, min_pad)
         pad_x = max(mask_w // 2, min_pad)
+
+        # Expand padding so the mask covers < max_ratio of the crop.
+        # mask_area / crop_area = (mask_h * mask_w) / ((mask_h + 2*pad_y) * (mask_w + 2*pad_x))
+        ratio = (mask_h * mask_w) / ((mask_h + 2 * pad_y) * (mask_w + 2 * pad_x))
+        if ratio > max_ratio:
+            needed = int((mask_h * mask_w / max_ratio) ** 0.5)
+            needed = max(needed, mask_h + 2 * min_pad, mask_w + 2 * min_pad)
+            # Set padding so each dimension has at least (needed - mask_dim) / 2
+            pad_y = max(pad_y, (needed - mask_h) // 2)
+            pad_x = max(pad_x, (needed - mask_w) // 2)
 
         cy1 = max(0, y_min - pad_y)
         cy2 = min(h, y_max + pad_y + 1)
@@ -211,6 +226,12 @@ class LaMa:
         at full resolution, resizes just the crop to 512×512 for the model,
         then blends the result back into the original image.
 
+        Includes three safeguards against the "black square" failure:
+        1. Context-ratio enforcement: crop is expanded if mask > 35% of crop
+        2. NaN guard: NaN values from ORT are replaced with 0 before clipping
+        3. TELEA fallback: if LaMa output in masked area is too dark,
+           cv2.inpaint (TELEA) is used on the same crop
+
         Args:
             img_bgr: BGR uint8 image (H, W, 3).
             mask:    uint8 single-channel mask (H, W), non-zero = hole.
@@ -233,7 +254,7 @@ class LaMa:
         # 1. Dilate mask for better coverage
         work_mask = self._dilate_mask(mask, dilate_px)
 
-        # 2. Compute generous crop around the mask
+        # 2. Compute generous crop around the mask (context-ratio enforced)
         cy1, cx1, cy2, cx2 = self._compute_crop_bbox(work_mask, h, w)
         crop_img = img_bgr[cy1:cy2, cx1:cx2]
         crop_mask = work_mask[cy1:cy2, cx1:cx2]
@@ -243,24 +264,55 @@ class LaMa:
         img_blob = self._preprocess(crop_img)
         mask_blob = self._preprocess_mask(crop_mask)
 
-        # 4. Run inference (optionally iterative)
+        # 4. Run inference (optionally iterative) with NaN guard
+        result_u8 = self._run_lama(img_blob, mask_blob, iterations)
+
+        # 5. Resize result back to crop dimensions BEFORE quality check
+        if result_u8.shape[0] != crop_h or result_u8.shape[1] != crop_w:
+            result_u8 = cv2.resize(
+                result_u8, (crop_w, crop_h), interpolation=cv2.INTER_LINEAR,
+            )
+
+        # 6. Quality check: detect "black square" failure
+        # A real LaMa failure produces near-uniform black (low mean AND low std).
+        # A legitimately dark region has varied texture (std > 0) — don't
+        # fall back in that case.
+        masked_pixels = result_u8[crop_mask > 0]
+        if masked_pixels.size > 0:
+            is_too_dark = masked_pixels.mean() < _DARKNESS_THRESHOLD
+            is_uniform = masked_pixels.std() < 2.0
+            if is_too_dark and is_uniform:
+                # LaMa produced a uniform black fill — fall back to TELEA.
+                result_u8 = cv2.inpaint(
+                    crop_img, crop_mask, 5.0, cv2.INPAINT_TELEA,
+                )
+
+        # 7. Blend back: feathered transition at mask boundary
+        blended_crop = self._feather_blend(crop_img, result_u8, crop_mask)
+
+        result = img_bgr.copy()
+        result[cy1:cy2, cx1:cx2] = blended_crop
+        return result
+
+    def _run_lama(
+        self,
+        img_blob: np.ndarray,
+        mask_blob: np.ndarray,
+        iterations: int,
+    ) -> np.ndarray:
+        """Run LaMa inference with NaN guard. Returns HWC uint8."""
         out = self._session.run(None, {"image": img_blob, "mask": mask_blob})[0]
         result_hwc = out[0].transpose(1, 2, 0)
+        # Guard against NaN — certain edge-case inputs produce NaN from ORT,
+        # which astype(uint8) converts to 0 (black square).
+        result_hwc = np.nan_to_num(result_hwc, nan=0.0, posinf=255.0, neginf=0.0)
         result_u8 = np.clip(result_hwc, 0, 255).astype(np.uint8)
 
         for _i in range(1, iterations):
             img_blob = self._preprocess(result_u8)
             out = self._session.run(None, {"image": img_blob, "mask": mask_blob})[0]
             result_hwc = out[0].transpose(1, 2, 0)
+            result_hwc = np.nan_to_num(result_hwc, nan=0.0, posinf=255.0, neginf=0.0)
             result_u8 = np.clip(result_hwc, 0, 255).astype(np.uint8)
 
-        # 5. Resize result back to crop dimensions
-        if result_u8.shape[0] != crop_h or result_u8.shape[1] != crop_w:
-            result_u8 = cv2.resize(result_u8, (crop_w, crop_h), interpolation=cv2.INTER_LINEAR)
-
-        # 6. Blend back: feathered transition at mask boundary
-        blended_crop = self._feather_blend(crop_img, result_u8, crop_mask)
-
-        result = img_bgr.copy()
-        result[cy1:cy2, cx1:cx2] = blended_crop
-        return result
+        return result_u8
