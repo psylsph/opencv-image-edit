@@ -1,0 +1,44 @@
+# docker-compose.yml — opencv-image-edit
+# Brings up the FastAPI app with Prometheus metrics on :9090.
+# Models are baked into the image at build time (see Dockerfile
+# stage 1). The `model-cache` volume keeps the model files out
+# of the image's writable layer when the container is restarted.
+
+services:
+  opencv-image-edit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: opencv-image-edit:1.0.0
+    container_name: opencv-image-edit
+    restart: unless-stopped
+    ports:
+      - "8000:8000"   # FastAPI + static PWA
+      - "9090:9090"   # Prometheus metrics
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8000"
+      DEBUG: "false"
+      LOG_LEVEL: "INFO"
+      MAX_IMAGE_SIZE_MB: "10"
+      MAX_IMAGE_DIMENSION: "1536"
+      MODEL_DIR: "/home/app/models"
+      RATE_LIMIT_REQUESTS: "10"
+      RATE_LIMIT_PERIOD: "60"
+      ENABLE_METRICS: "true"
+      METRICS_PORT: "9090"
+    volumes:
+      - model-cache:/home/app/models
+      - temp-data:/tmp/opencv-image-edit
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  model-cache:
+    driver: local
+  temp-data:
+    driver: local
