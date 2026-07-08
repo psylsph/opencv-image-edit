@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="style.css?v=3" />
+  <link rel="stylesheet" href="style.css?v=4" />
 </head>
 <body>
   <main class="app">
@@ -26,7 +26,7 @@
         <span>Upload or take photo</span>
       </button>
       <p class="upload-hint">PNG, JPEG, HEIC, WebP • max 10MB</p>
-      <input id="file-input" type="file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif" capture="environment" hidden />
+      <input id="file-input" type="file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif" hidden />
       <div id="preview-container" hidden>
         <img id="preview" alt="Uploaded preview" />
         <button id="clear-btn" class="btn btn-secondary" type="button" aria-label="Clear uploaded image">✕ Clear</button>
@@ -197,6 +197,6 @@
     </footer>
   </main>
 
-  <script type="module" src="app.js?v=3"></script>
+  <script type="module" src="app.js?v=4"></script>
 </body>
 </html>
