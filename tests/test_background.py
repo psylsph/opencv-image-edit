@@ -209,6 +209,38 @@ def test_matting_model_predict_signature_exists():
     assert hasattr(MattingModel, "predict")
 
 
+@pytest.mark.slow
+def test_matting_model_predicts_real_foreground():
+    """End-to-end: real U2NetP ONNX should separate a drawn person from background.
+
+    Regression guard for the 'no sigmoid' bug: without this, .predict() returns
+    a near-uniform ~0.5 mask that destroys blur/remove compositing.
+    Skipped if model file is missing.
+    """
+    import cv2
+    from pathlib import Path
+
+    model_path = Path(__file__).parent.parent / "models" / "u2netp.onnx"
+    if not model_path.exists():
+        pytest.skip("u2netp.onnx not present — run scripts/download_models.py")
+
+    # Synthetic image: green background + blue person silhouette
+    img = np.full((400, 600, 3), 80, dtype=np.uint8)
+    img[:, :] = (80, 120, 100)  # BGR
+    cv2.ellipse(img, (300, 200), (80, 120), 0, 0, 360, (180, 160, 200), -1)
+
+    model = MattingModel(model_path)
+    mask = model.predict(img)
+
+    # Mask must be properly bimodal (not stuck around 0.5)
+    fg_fraction = (mask > 0.5).mean()
+    bg_corner = mask[10, 10]
+    fg_center = mask[200, 300]
+    assert fg_fraction < 0.5, f"mask looks uniform: {fg_fraction:.2%} foreground"
+    assert bg_corner < 0.1, f"background not suppressed: corner={bg_corner}"
+    assert fg_center > 0.9, f"foreground not detected: center={fg_center}"
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

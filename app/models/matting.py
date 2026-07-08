@@ -37,19 +37,22 @@ class MattingModel:
         self._net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
 
     def predict(self, img_bgr: np.ndarray) -> np.ndarray:
-        """Run matting on a BGR image, return float32 mask (H, W) in [0, 1]."""
+        """Run matting on a BGR image, return float32 mask (H, W) in [0, 1].
+
+        The U2NetP ONNX (from rembg) outputs a (1, 1, 320, 320) probability
+        mask in [0, 1] — no sigmoid needed. cv2.dnn collapses the multi-output
+        U^2-Net graph into a single tensor.
+        """
         h, w = img_bgr.shape[:2]
-        # BGR -> RGB, resize, normalize
+        # BGR -> RGB, resize, normalize (ImageNet stats, [0,1] pixel range)
         rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-        resized = cv2.resize(rgb, (_MODEL_SIZE, _MODEL_SIZE), interpolation=cv2.INTER_AREA)
+        resized = cv2.resize(rgb, (_MODEL_SIZE, _MODEL_SIZE), interpolation=cv2.INTER_LINEAR)
         normalized = (resized - _MEAN) / _STD
         # HWC -> NCHW
         blob = normalized.transpose(2, 0, 1)[np.newaxis, :, :, :]
         self._net.setInput(blob)
-        out = self._net.forward()  # shape (1, 1, 320, 320)
-        mask = out[0, 0]  # (320, 320) float32
-        # Sigmoid (U2Net output is logits)
-        mask = 1.0 / (1.0 + np.exp(-mask))
+        out = self._net.forward()  # shape (1, 1, 320, 320), values in [0, 1]
+        mask = out[0, 0]  # (320, 320) float32, already a probability
         # Resize to original
         mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_LINEAR)
         return np.clip(mask, 0.0, 1.0).astype(np.float32)

@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="style.css?v=2" />
+  <link rel="stylesheet" href="style.css?v=3" />
 </head>
 <body>
   <main class="app">
@@ -21,19 +21,12 @@
     </header>
 
     <section class="upload-section" aria-label="Upload image">
-      <div class="upload-buttons">
-        <button id="upload-btn" class="btn btn-primary upload-btn" type="button">
-          <span class="upload-btn-icon">📁</span>
-          <span>Upload</span>
-        </button>
-        <button id="camera-btn" class="btn btn-secondary upload-btn" type="button">
-          <span class="upload-btn-icon">📷</span>
-          <span>Camera</span>
-        </button>
-      </div>
+      <button id="upload-btn" class="btn btn-primary upload-btn" type="button">
+        <span class="upload-btn-icon">📷</span>
+        <span>Upload or take photo</span>
+      </button>
       <p class="upload-hint">PNG, JPEG, HEIC, WebP • max 10MB</p>
-      <input id="file-input" type="file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif" hidden />
-      <input id="camera-input" type="file" accept="image/*" capture="environment" hidden />
+      <input id="file-input" type="file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif" capture="environment" hidden />
       <div id="preview-container" hidden>
         <img id="preview" alt="Uploaded preview" />
         <button id="clear-btn" class="btn btn-secondary" type="button" aria-label="Clear uploaded image">✕ Clear</button>
@@ -204,6 +197,6 @@
     </footer>
   </main>
 
-  <script type="module" src="app.js?v=2"></script>
+  <script type="module" src="app.js?v=3"></script>
 </body>
 </html>
