@@ -581,12 +581,31 @@ function setupMaskCanvas() {
     canvas.style.height = renderedH + "px";
     canvas.style.left = offsetX + "px";
     canvas.style.top = offsetY + "px";
-    canvas.width = Math.round(renderedW * dpr);
-    canvas.height = Math.round(renderedH * dpr);
-    ctx.setTransform(1, 0, 0, 1, 0, 0); // reset transform before scaling
-    ctx.scale(dpr, dpr);
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
+
+    // Only resize the canvas backing store if dimensions actually changed.
+    // Setting canvas.width/height clears all content — on mobile, the URL bar
+    // show/hide fires resize events that would wipe the mask if we blindly reset.
+    const newW = Math.round(renderedW * dpr);
+    const newH = Math.round(renderedH * dpr);
+    if (canvas.width !== newW || canvas.height !== newH) {
+      // Save existing content before resizing
+      let saved = null;
+      if (canvas.width > 0 && canvas.height > 0) {
+        saved = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      }
+      canvas.width = newW;
+      canvas.height = newH;
+      ctx.setTransform(1, 0, 0, 1, 0, 0); // reset transform before scaling
+      ctx.scale(dpr, dpr);
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      // Restore content if we had any
+      if (saved) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0); // reset to draw at backing-store scale
+        ctx.putImageData(saved, 0, 0);
+        ctx.scale(dpr, dpr); // re-apply dpr scale for subsequent drawing
+      }
+    }
   };
 
   // Run after the image has loaded
@@ -595,9 +614,13 @@ function setupMaskCanvas() {
   } else {
     img.addEventListener("load", updateSize, { once: true });
   }
-  // Re-fit on window resize
+  // Re-fit on window resize — but debounce so mobile URL bar show/hide
+  // (which fires resize) doesn't thrash the canvas.
+  let resizeTimer = null;
   window.addEventListener("resize", () => {
-    if (state.mask.imageW) updateSize();
+    if (!state.mask.imageW) return;
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => updateSize(), 150);
   });
 }
 
