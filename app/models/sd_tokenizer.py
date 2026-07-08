@@ -33,7 +33,13 @@ class CLIPTokenizer:
             )
 
         # Build a CLIP-compatible BPE tokenizer
-        self._tokenizer = Tokenizer.from_file(str(config_path)) if config_path.exists() else None
+        self._tokenizer = None
+        if config_path.exists():
+            try:
+                self._tokenizer = Tokenizer.from_file(str(config_path))
+            except Exception:
+                # tokenizer_config.json is HF format, not tokenizers library format
+                pass
 
         # If tokenizer_config.json isn't a tokenizers-format file, build from vocab+merges
         if self._tokenizer is None:

@@ -332,9 +332,13 @@ def download_sd_models(target_dir: Path) -> None:
         dest = sd_dir / subdir_path
         dest.parent.mkdir(parents=True, exist_ok=True)
 
-        if dest.exists() and dest.stat().st_size > 1024:
+        if dest.exists() and dest.stat().st_size > 100:
             print(f"  [{subdir_path}] already present ({dest.stat().st_size / 1024 / 1024:.0f} MB)")
             continue
+
+        # If partial is <100 bytes, treat as missing and start fresh (avoid 416)
+        if dest.exists():
+            dest.unlink()
 
         print(f"  [{subdir_path}] downloading (~{size_mb} MB)...")
         _download(f"{base_url}/{repo_path}", dest)

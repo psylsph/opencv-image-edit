@@ -93,7 +93,7 @@ class SDInpaint:
         )
 
         # Load tokenizer
-        self._tokenizer = CLIPTokenizer(sd_dir)
+        self._tokenizer = CLIPTokenizer(sd_dir / "tokenizer")
 
         # DDIM scheduler
         self._scheduler = DDIMScheduler()
@@ -137,9 +137,9 @@ class SDInpaint:
         Row 0: unconditional (negative prompt)
         Row 1: conditional (prompt)
         """
-        tokens_cond = np.array([self._tokenizer.tokenize(prompt)], dtype=np.int64)
+        tokens_cond = np.array([self._tokenizer.tokenize(prompt)], dtype=np.int32)
         tokens_uncond = np.array(
-            [self._tokenizer.tokenize(negative_prompt)], dtype=np.int64
+            [self._tokenizer.tokenize(negative_prompt)], dtype=np.int32
         )
 
         input_name = self._text_encoder.get_inputs()[0].name
