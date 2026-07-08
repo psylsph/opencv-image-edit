@@ -259,11 +259,12 @@ img { max-width: 100%; height: auto; display: block; }
 .segmented input[type="radio"] { position: absolute; opacity: 0; pointer-events: none; }
 .segmented label > span {
   font-size: 14px; font-weight: 500;
-  padding: 8px 12px;
+  padding: 8px 8px;
   border-radius: 6px;
   transition: background 0.15s, color 0.15s;
   display: block;
   text-align: center;
+  white-space: nowrap;
 }
 .segmented input[type="radio"]:checked + span {
   background: var(--accent);
