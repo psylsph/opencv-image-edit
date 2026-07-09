@@ -82,6 +82,20 @@ def test_segment_module_api_exists() -> None:
     np.testing.assert_allclose(sam_mod._STD, [58.395, 57.12, 57.375], atol=1e-3)
 
 
+def test_click_selection_mask_gets_rounded_edge_margin() -> None:
+    """Click selections expand outward so object-edge colour is removed too."""
+    from app.api.segment import _SELECTION_BORDER_PX, _expand_selection_mask
+
+    mask = np.zeros((100, 100), dtype=np.uint8)
+    mask[40:60, 40:60] = 255
+    expanded = _expand_selection_mask(mask)
+
+    assert expanded[50, 50] == 255
+    assert expanded[50, 40 - _SELECTION_BORDER_PX] == 255
+    assert expanded[50, 40 - _SELECTION_BORDER_PX - 1] == 0
+    assert expanded.sum() > mask.sum()
+
+
 # ---------------------------------------------------------------------------
 # /api/v1/segment endpoint — error paths
 # ---------------------------------------------------------------------------

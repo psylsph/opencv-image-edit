@@ -828,8 +828,9 @@ async function runSegmentation(clientX, clientY) {
     state.mask.detectionScore = data.score;
     drawDetectedMaskOnCanvas(data.mask);
     const areaPct = (data.mask_area_pct * 100).toFixed(1);
+    const borderText = data.selection_border_px ? `, +${data.selection_border_px}px edge margin` : "";
     $("#inpaint-click-status").textContent =
-      `Detected (IoU ${data.score.toFixed(2)}, ${areaPct}% of image). ✅ Remove or 🎯 Try again.`;
+      `Detected (IoU ${data.score.toFixed(2)}, ${areaPct}% of image${borderText}). ✅ Remove or 🎯 Try again.`;
     $("#inpaint-click-actions").hidden = false;
     setStatus(`Detected (IoU ${data.score.toFixed(2)}, ${areaPct}%)`, "");
   } catch (err) {

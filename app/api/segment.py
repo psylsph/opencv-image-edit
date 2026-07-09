@@ -16,6 +16,19 @@ from app.pipeline.io import decode_to_bgr, encode_png
 
 router = APIRouter()
 
+# MobileSAM boundaries can land a few pixels inside the object. Expand click
+# selections so edge colour/fringing is included in the inpainted area.
+_SELECTION_BORDER_PX = 8
+
+
+def _expand_selection_mask(mask: np.ndarray, border_px: int = _SELECTION_BORDER_PX) -> np.ndarray:
+    """Return a rounded, outward expansion of a binary selection mask."""
+    if border_px <= 0:
+        return mask.copy()
+    ksize = border_px * 2 + 1
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksize, ksize))
+    return cv2.dilate(mask, kernel)
+
 
 @router.post("/api/v1/segment")
 async def segment(
@@ -45,6 +58,7 @@ async def segment(
     started = time.perf_counter()
     try:
         mask, score = segment_with_point(img, (x, y))
+        mask = _expand_selection_mask(mask)
     except ModelNotFoundError:
         # Don't count as a 500 or "segment_error" — model availability is
         # an operational concern, not a request failure. Let the AppError
@@ -78,6 +92,7 @@ async def segment(
         "mask": f"data:image/png;base64,{base64.b64encode(mask_png).decode('ascii')}",
         "overlay": f"data:image/png;base64,{base64.b64encode(overlay_png).decode('ascii')}",
         "score": score,
+        "selection_border_px": _SELECTION_BORDER_PX,
         "elapsed_seconds": elapsed,
         "mask_area_pct": float((mask > 0).mean()),
         "point": {"x": x, "y": y},
