@@ -11,12 +11,12 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="style.css?v=11" />
+  <link rel="stylesheet" href="style.css?v=16" />
 </head>
 <body>
   <main class="app">
     <header class="app-header">
-      <h1>🎨 OpenCV Image Editor</h1>
+      <h1>OpenCV Editor</h1>
       <p class="subtitle">AI background • Film grain • 4× upscale</p>
     </header>
 
@@ -49,12 +49,12 @@
         <summary>
           <span class="control-icon" aria-hidden="true">🌫️</span>
           <span>Background</span>
-          <label class="switch" aria-label="Enable background processing">
-            <input type="checkbox" id="bg-enabled" />
-            <span class="slider-toggle"></span>
-          </label>
         </summary>
         <div class="control-body">
+          <label class="checkbox-row">
+            <input type="checkbox" id="bg-enabled" />
+            <span>Enable background processing</span>
+          </label>
           <fieldset class="segmented" id="bg-mode">
             <legend class="sr-only">Background mode</legend>
             <label><input type="radio" name="bg-mode" value="blur" checked /><span>Blur</span></label>
@@ -71,12 +71,12 @@
         <summary>
           <span class="control-icon" aria-hidden="true">🎬</span>
           <span>Film Grain</span>
-          <label class="switch" aria-label="Enable film grain">
-            <input type="checkbox" id="grain-enabled" />
-            <span class="slider-toggle"></span>
-          </label>
         </summary>
         <div class="control-body">
+          <label class="checkbox-row">
+            <input type="checkbox" id="grain-enabled" />
+            <span>Enable film grain</span>
+          </label>
           <label class="slider-row">
             <span>Intensity <output id="grain-value">0.4</output></span>
             <input type="range" id="grain-intensity" min="0" max="1" step="0.05" value="0.4" />
@@ -88,12 +88,12 @@
         <summary>
           <span class="control-icon" aria-hidden="true">🔍</span>
           <span>Upscale</span>
-          <label class="switch" aria-label="Enable upscaling">
-            <input type="checkbox" id="upscale-enabled" />
-            <span class="slider-toggle"></span>
-          </label>
         </summary>
         <div class="control-body">
+          <label class="checkbox-row">
+            <input type="checkbox" id="upscale-enabled" />
+            <span>Enable upscaling</span>
+          </label>
           <fieldset class="segmented" id="upscale-scale">
             <legend class="sr-only">Scale factor</legend>
             <label><input type="radio" name="upscale-scale" value="1" /><span>1×</span></label>
@@ -115,12 +115,12 @@
         <summary>
           <span class="control-icon" aria-hidden="true">🎨</span>
           <span>Color Filters</span>
-          <label class="switch" aria-label="Enable color filters">
-            <input type="checkbox" id="filters-enabled" />
-            <span class="slider-toggle"></span>
-          </label>
         </summary>
         <div class="control-body">
+          <label class="checkbox-row">
+            <input type="checkbox" id="filters-enabled" />
+            <span>Enable color filters</span>
+          </label>
           <label class="slider-row">
             <span>Brightness <output id="brightness-value">1.0</output></span>
             <input type="range" id="brightness" min="0" max="2" step="0.05" value="1.0" />
@@ -152,12 +152,12 @@
         <summary>
           <span class="control-icon" aria-hidden="true">✂️</span>
           <span>Remove Object</span>
-          <label class="switch" aria-label="Enable object removal">
-            <input type="checkbox" id="inpaint-enabled" />
-            <span class="slider-toggle"></span>
-          </label>
         </summary>
         <div class="control-body">
+          <label class="checkbox-row">
+            <input type="checkbox" id="inpaint-enabled" />
+            <span>Enable object removal</span>
+          </label>
           <fieldset class="segmented" id="inpaint-mode">
             <legend class="sr-only">Selection mode</legend>
             <label><input type="radio" name="inpaint-mode" value="click" checked /><span>🎯 Click</span></label>
@@ -269,6 +269,6 @@
     </footer>
   </main>
 
-  <script type="module" src="app.js?v=11"></script>
+  <script type="module" src="app.js?v=16"></script>
 </body>
 </html>

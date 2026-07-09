@@ -430,6 +430,7 @@ function clearFile() {
 }
 
 function updateProcessButton() {
+  document.body.classList.toggle("has-file", !!state.file);
   const btn = $("#process-btn");
   btn.disabled = !state.file || state.processing;
   if (state.processing) {
