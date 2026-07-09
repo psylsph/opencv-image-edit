@@ -169,17 +169,25 @@ function bindEvents() {
   $("#inpaint-radius").addEventListener("input", (e) => {
     $("#inpaint-radius-value").textContent = e.target.value;
   });
-  // Hide fill radius when AI (LaMa/SD) is selected — they don't use the param
+  // AI quality/pass count live update
+  $("#inpaint-iterations").addEventListener("input", (e) => {
+    const passes = parseInt(e.target.value, 10);
+    $("#inpaint-iterations-value").textContent = `${passes} ${passes === 1 ? "pass" : "passes"}`;
+  });
+  // Hide algorithm-specific controls when they don't apply
   function updateInpaintRadiusVisibility() {
     const checked = document.querySelector("input[name='inpaint-algo']:checked");
     if (!checked) return;
     const val = checked.value;
     const row = $("#inpaint-radius-row");
     const promptRow = $("#inpaint-prompt-row");
+    const iterationsRow = $("#inpaint-iterations-row");
     // LaMa and SD don't use radius; only NS/TELEA do
     if (row) row.style.display = (val === "ns" || val === "telea") ? "flex" : "none";
     // Prompt field shows for SD only
     if (promptRow) promptRow.style.display = val === "sd" ? "flex" : "none";
+    // Iteration passes improve LaMa only; SD has fixed DDIM steps, NS/TELEA use radius
+    if (iterationsRow) iterationsRow.style.display = val === "lama" ? "flex" : "none";
   }
   $$("input[name='inpaint-algo']").forEach((r) => {
     r.addEventListener("change", updateInpaintRadiusVisibility);
@@ -939,6 +947,7 @@ async function processImage() {
 
 async function processInpaint() {
   const radius = parseInt($("#inpaint-radius").value, 10);
+  const iterations = parseInt($("#inpaint-iterations").value, 10);
   const algorithm = document.querySelector("input[name='inpaint-algo']:checked").value;
   const prompt = $("#inpaint-prompt") ? $("#inpaint-prompt").value : "";
 
@@ -963,6 +972,9 @@ async function processInpaint() {
   formData.append("mask", maskBlob, "mask.png");
   formData.append("radius", String(radius));
   formData.append("algorithm", algorithm);
+  if (algorithm === "lama") {
+    formData.append("iterations", String(iterations));
+  }
   if (algorithm === "sd" && prompt) {
     formData.append("prompt", prompt);
   }

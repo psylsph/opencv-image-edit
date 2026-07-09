@@ -75,6 +75,8 @@ def inpaint(
     else:
         bgr = img
 
+    iterations = max(1, min(5, int(iterations)))
+
     if algorithm == "lama":
         lama = LaMa.get()
         out = lama.infer(bgr, mask, iterations=iterations)

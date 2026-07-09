@@ -216,6 +216,31 @@ def test_inpaint_lama_dispatches_without_radius_error(monkeypatch):
     assert out.dtype == np.uint8
 
 
+def test_inpaint_lama_passes_clamped_iterations(monkeypatch):
+    """LaMa quality passes should be bounded before model dispatch."""
+    from app.pipeline import inpaint as inpaint_mod
+
+    seen = {}
+
+    class _FakeLaMa:
+        @staticmethod
+        def get():
+            return _FakeLaMa()
+
+        @staticmethod
+        def infer(img, mask, **kwargs):
+            seen["iterations"] = kwargs["iterations"]
+            return img.copy()
+
+    monkeypatch.setattr(inpaint_mod, "LaMa", _FakeLaMa)
+
+    img = np.zeros((100, 100, 3), dtype=np.uint8)
+    mask = np.zeros((100, 100), dtype=np.uint8)
+    mask[40:60, 40:60] = 255
+    inpaint(img, mask, algorithm="lama", iterations=99)
+    assert seen["iterations"] == 5
+
+
 def test_inpaint_lama_raises_when_model_missing(monkeypatch):
     """If the LaMa model file doesn't exist, raise ModelNotFoundError."""
     from app.exceptions import ModelNotFoundError

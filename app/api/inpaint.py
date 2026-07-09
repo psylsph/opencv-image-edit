@@ -26,7 +26,7 @@ async def inpaint_endpoint(
     mask: UploadFile = File(...),
     radius: int = Form(default=3),
     algorithm: str = Form(default="lama"),
-    iterations: int = Form(default=1),
+    iterations: int = Form(default=2),
     prompt: str = Form(default=""),
 ) -> dict:
     """Remove the masked region and fill it in with surrounding content.
