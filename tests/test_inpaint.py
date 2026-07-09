@@ -238,7 +238,7 @@ def test_inpaint_lama_passes_clamped_iterations(monkeypatch):
     mask = np.zeros((100, 100), dtype=np.uint8)
     mask[40:60, 40:60] = 255
     inpaint(img, mask, algorithm="lama", iterations=99)
-    assert seen["iterations"] == 5
+    assert seen["iterations"] == 10
 
 
 def test_inpaint_lama_raises_when_model_missing(monkeypatch):

@@ -57,6 +57,8 @@ async def inpaint_endpoint(
     started = time.perf_counter()
     status = "ok"
 
+    iterations = max(1, min(10, iterations))
+
     # Log mask diagnostics for debugging
     mask_ratio = float((mask_img > 0).mean())
     logger.info(
