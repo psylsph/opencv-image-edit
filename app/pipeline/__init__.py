@@ -17,6 +17,7 @@ from app.models.matting import get_matting_model
 from app.pipeline.background import (
     apply_background_blur,
     apply_background_remove,
+    background_paint_mask_to_foreground_alpha,
     get_alpha_debug,
 )
 from app.pipeline.comparison import diff_overlay, side_by_side
@@ -44,12 +45,18 @@ class ProcessResult:
     grain_only: Optional[np.ndarray]  # 2D uint8 grain visualization (or None)
 
 
-def process_pipeline(img_bgr: np.ndarray, request: ProcessRequest) -> ProcessResult:
+def process_pipeline(
+    img_bgr: np.ndarray,
+    request: ProcessRequest,
+    background_mask: Optional[np.ndarray] = None,
+) -> ProcessResult:
     """Run the full processing pipeline.
 
     Args:
         img_bgr: BGR uint8 image (H, W, 3).
         request: validated ProcessRequest specifying which stages to run.
+        background_mask: optional user-painted mask where non-zero pixels are
+            explicitly background. Used instead of AI matting when provided.
 
     Returns:
         ProcessResult with the final image plus debug visualizations.
@@ -67,8 +74,11 @@ def process_pipeline(img_bgr: np.ndarray, request: ProcessRequest) -> ProcessRes
 
         # 2. Background
         if request.background.enabled:
-            matting = get_matting_model()
-            mask = matting.predict(current)
+            if background_mask is not None:
+                mask = background_paint_mask_to_foreground_alpha(background_mask, current.shape)
+            else:
+                matting = get_matting_model()
+                mask = matting.predict(current)
             mask_debug = get_alpha_debug(mask)
             if request.background.mode == "blur":
                 current = apply_background_blur(

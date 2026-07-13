@@ -109,13 +109,25 @@ function bindEvents() {
   // Background enabled toggle: dim sub-controls when off
   $("#bg-enabled").addEventListener("change", (e) => {
     setGroupDisabled("#bg-mode", !e.target.checked);
+    setGroupDisabled("#bg-source", !e.target.checked);
     setRowDisabled("#blur-strength-row", !e.target.checked);
+    updateBackgroundMaskControls();
   });
 
   // Background mode: hide blur-strength row when in "remove" mode
   $$("input[name='bg-mode']").forEach((r) => {
     r.addEventListener("change", updateBlurStrengthVisibility);
   });
+  // Background source: auto matting or manual painted background mask
+  $$("input[name='bg-source']").forEach((r) => {
+    r.addEventListener("change", updateBackgroundMaskControls);
+  });
+  $("#bg-brush-size").addEventListener("input", (e) => {
+    state.mask.brushSize = parseInt(e.target.value, 10);
+    $("#bg-brush-value").textContent = state.mask.brushSize;
+  });
+  $("#bg-mask-undo").addEventListener("click", undoMaskStroke);
+  $("#bg-mask-clear").addEventListener("click", clearMask);
 
   // Grain enabled toggle
   $("#grain-enabled").addEventListener("change", (e) => {
@@ -139,19 +151,34 @@ function bindEvents() {
   });
 
   // Auto-expand a section's <details> when its toggle is switched on
-  $$(".control-group summary input[type='checkbox']").forEach((cb) => {
+  [
+    ["#bg-enabled", "#bg-group"],
+    ["#grain-enabled", "#grain-group"],
+    ["#upscale-enabled", "#upscale-group"],
+    ["#filters-enabled", "#filters-group"],
+    ["#inpaint-enabled", "#inpaint-group"],
+  ].forEach(([cbSel, groupSel]) => {
+    const cb = $(cbSel);
+    const details = $(groupSel);
+    if (!cb || !details) return;
     cb.addEventListener("change", () => {
-      const details = cb.closest("details");
-      if (details && cb.checked) details.open = true;
+      if (cb.checked) details.open = true;
     });
   });
 
   // Inpaint (object removal) toggle
   $("#inpaint-enabled").addEventListener("change", (e) => {
     state.mask.enabled = e.target.checked;
-    $("#mask-canvas").hidden = !e.target.checked;
+    updateMaskCanvasVisibility();
+    updateBackgroundMaskControls();
     if (e.target.checked) {
       if (state.mask.imageW) setupMaskCanvas();
+    } else if (isBackgroundPaintActive()) {
+      state.mask.detectedMask = null;
+      state.mask.detectionScore = 0;
+      $("#inpaint-click-actions").hidden = true;
+      $("#inpaint-click-status").hidden = true;
+      $("#inpaint-click-status").textContent = "";
     } else {
       clearClickSelection();
     }
@@ -378,6 +405,30 @@ function updateBlurStrengthVisibility() {
   if (row) row.style.display = remove ? "none" : "flex";
 }
 
+function isBackgroundPaintActive() {
+  const bgEnabled = $("#bg-enabled")?.checked;
+  const source = document.querySelector("input[name='bg-source']:checked")?.value || "auto";
+  // Object-removal masking owns the shared canvas when enabled.
+  return !!bgEnabled && source === "paint" && !state.mask.enabled;
+}
+
+function updateMaskCanvasVisibility() {
+  const canvas = $("#mask-canvas");
+  if (!canvas) return;
+  const visible = state.mask.enabled || isBackgroundPaintActive();
+  canvas.hidden = !visible;
+  if (visible && state.mask.imageW) setupMaskCanvas();
+}
+
+function updateBackgroundMaskControls() {
+  const paint = isBackgroundPaintActive();
+  const enabled = $("#bg-enabled")?.checked;
+  $("#bg-mask-controls").hidden = !paint;
+  $("#bg-mask-hint").hidden = !paint;
+  setGroupDisabled("#bg-source", !enabled);
+  updateMaskCanvasVisibility();
+}
+
 function onFileSelected(e) {
   const file = e.target.files && e.target.files[0];
   if (!file) return;
@@ -394,7 +445,7 @@ function onFileSelected(e) {
   img.onload = () => {
     state.mask.imageW = img.naturalWidth;
     state.mask.imageH = img.naturalHeight;
-    if (state.mask.enabled) setupMaskCanvas();
+    if (state.mask.enabled || isBackgroundPaintActive()) setupMaskCanvas();
   };
 
   $("#preview-container").hidden = false;
@@ -507,7 +558,10 @@ function applyPreset(name) {
   const bgMode = document.querySelector(`input[name='bg-mode'][value='${s.background.mode}']`);
   if (bgMode) bgMode.checked = true;
   setSlider($("#blur-strength"), s.background.blur_strength, $("#blur-value"));
+  const bgSource = document.querySelector("input[name='bg-source'][value='auto']");
+  if (bgSource) bgSource.checked = true;
   updateBlurStrengthVisibility();
+  updateBackgroundMaskControls();
   // Re-fire change handlers to update visual disabled states
   $("#bg-enabled").dispatchEvent(new Event("change"));
 
@@ -657,9 +711,10 @@ function pushMaskHistory() {
 }
 
 function startMaskStroke(evt) {
-  if (!state.mask.enabled || !state.mask.ctx) return;
-  // In click mode, the click handler takes over — don't draw a paint dot
-  if (state.mask.mode === "click") {
+  const bgPaint = isBackgroundPaintActive();
+  if (!state.mask.ctx || (!state.mask.enabled && !bgPaint)) return;
+  // In click mode, object-removal click detection takes over — don't draw a paint dot.
+  if (state.mask.enabled && state.mask.mode === "click") {
     onMaskClick(evt);
     return;
   }
@@ -674,7 +729,8 @@ function startMaskStroke(evt) {
 }
 
 function continueMaskStroke(evt) {
-  if (!state.mask.drawing || !state.mask.ctx) return;
+  const bgPaint = isBackgroundPaintActive();
+  if (!state.mask.drawing || !state.mask.ctx || (!state.mask.enabled && !bgPaint)) return;
   evt.preventDefault();
   const { x, y } = getCanvasCoords(evt);
   paintMaskSegment(state.mask.lastX, state.mask.lastY, x, y);
@@ -690,12 +746,18 @@ function paintMaskSegment(x0, y0, x1, y1) {
   const ctx = state.mask.ctx;
   // Scale brush from display px to canvas px (we used dpr scale above,
   // so the context is already in display units)
-  const r = state.mask.brushSize / 2;
-  ctx.lineWidth = state.mask.brushSize;
-  // Translucent red so user can see what they're painting, but the alpha
-  // channel is high enough that the underlying pixels read as "to remove"
-  ctx.strokeStyle = "rgba(255, 60, 60, 0.85)";
-  ctx.fillStyle = "rgba(255, 60, 60, 0.85)";
+  const brushSize = isBackgroundPaintActive()
+    ? parseInt($("#bg-brush-size").value, 10)
+    : state.mask.brushSize;
+  const r = brushSize / 2;
+  ctx.lineWidth = brushSize;
+  const paintColour = isBackgroundPaintActive()
+    ? "rgba(80, 180, 255, 0.85)"
+    : "rgba(255, 60, 60, 0.85)";
+  // Translucent overlay so user can see the image, but the alpha channel is
+  // high enough that the underlying pixels read as selected in the mask PNG.
+  ctx.strokeStyle = paintColour;
+  ctx.fillStyle = paintColour;
   ctx.beginPath();
   ctx.moveTo(x0, y0);
   ctx.lineTo(x1, y1);
@@ -724,26 +786,15 @@ function undoMaskStroke() {
   state.mask.isDirty = state.mask.history.length > 0;
 }
 
-/** Returns a Promise<Blob> PNG of the mask at original image resolution.
- *  Black = keep, white = remove. */
-async function getMaskPngBlob() {
-  // In click mode, the detected mask is already a clean PNG at original size
-  if (state.mask.mode === "click" && state.mask.detectedMask) {
-    const resp = await fetch(state.mask.detectedMask);
-    return await resp.blob();
-  }
-  // Paint mode: render the display canvas (with red strokes) into a clean
-  // black/white mask at original image resolution.
-  // Do NOT pre-fill with opaque black — that would make source-in fill the
-  // entire canvas white (every pixel becomes opaque). Instead, draw the
-  // strokes on a transparent background, then convert non-transparent areas
-  // to white via source-in.
+/** Returns a Promise<Blob> PNG of the painted mask at original image resolution.
+ *  Transparent/black = keep, white = selected. */
+async function getPaintedMaskPngBlob() {
   const displayCanvas = $("#mask-canvas");
   const out = document.createElement("canvas");
   out.width = state.mask.imageW;
   out.height = state.mask.imageH;
   const octx = out.getContext("2d");
-  // Draw the painted strokes (transparent background + semi-transparent red)
+  // Draw the painted strokes (transparent background + semi-transparent overlay)
   octx.drawImage(displayCanvas, 0, 0, out.width, out.height);
   // Convert any painted pixel to opaque white; transparent stays transparent
   // (which decodes as grayscale 0 = black = keep when cv2 reads it)
@@ -754,10 +805,18 @@ async function getMaskPngBlob() {
   return new Promise((resolve) => out.toBlob(resolve, "image/png"));
 }
 
-function hasMaskContent() {
-  // Click mode: we have a mask if SAM returned one
-  if (state.mask.mode === "click") return !!state.mask.detectedMask;
-  // Paint mode: scan the canvas for any non-transparent pixel
+/** Returns a Promise<Blob> PNG of the inpaint mask at original image resolution.
+ *  Black = keep, white = remove. */
+async function getMaskPngBlob() {
+  // In click mode, the detected mask is already a clean PNG at original size
+  if (state.mask.mode === "click" && state.mask.detectedMask) {
+    const resp = await fetch(state.mask.detectedMask);
+    return await resp.blob();
+  }
+  return await getPaintedMaskPngBlob();
+}
+
+function hasPaintMaskContent() {
   if (!state.mask.ctx || !state.mask.isDirty) return false;
   const canvas = $("#mask-canvas");
   const data = state.mask.ctx.getImageData(0, 0, canvas.width, canvas.height).data;
@@ -765,6 +824,12 @@ function hasMaskContent() {
     if (data[i] > 0) return true;
   }
   return false;
+}
+
+function hasMaskContent() {
+  // Click mode: we have a mask if SAM returned one
+  if (state.mask.mode === "click") return !!state.mask.detectedMask;
+  return hasPaintMaskContent();
 }
 
 // ============================================================================
@@ -899,6 +964,24 @@ async function processImage() {
   const formData = new FormData();
   formData.append("file", state.file);
   formData.append("settings", JSON.stringify(settings));
+
+  if (isBackgroundPaintActive()) {
+    if (!hasPaintMaskContent()) {
+      setStatus("Paint at least one background area first, or switch Background source back to Auto.", "error");
+      state.processing = false;
+      updateProcessButton();
+      return;
+    }
+    try {
+      const bgMaskBlob = await getPaintedMaskPngBlob();
+      formData.append("background_mask", bgMaskBlob, "background-mask.png");
+    } catch (err) {
+      setStatus(`Error preparing background mask: ${err.message}`, "error");
+      state.processing = false;
+      updateProcessButton();
+      return;
+    }
+  }
 
   let resp;
   try {

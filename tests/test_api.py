@@ -402,6 +402,37 @@ class TestProcessEndpoint:
         assert body["output_size"]["width"] == 200
         assert body["output_size"]["height"] == 200
 
+    def test_process_accepts_manual_background_mask(
+        self, test_client: TestClient, sample_png_bytes: bytes
+    ):
+        settings = json.dumps(
+            {
+                "background": {
+                    "enabled": True,
+                    "mode": "remove",
+                    "blur_strength": 15,
+                }
+            }
+        )
+        mask = np.zeros((100, 100), dtype=np.uint8)
+        mask[20:60, 10:50] = 255
+        ok, buf = cv2.imencode(".png", mask)
+        assert ok
+
+        response = test_client.post(
+            "/api/v1/process",
+            files={
+                "file": ("test.png", sample_png_bytes, "image/png"),
+                "background_mask": ("background-mask.png", bytes(buf), "image/png"),
+            },
+            data={"settings": settings},
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["final"].startswith("data:image/png;base64,")
+        assert body["mask"].startswith("data:image/png;base64,")
+
 
 # ===========================================================================
 # /metrics

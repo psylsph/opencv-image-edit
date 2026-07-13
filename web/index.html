@@ -60,6 +60,22 @@
             <label><input type="radio" name="bg-mode" value="blur" checked /><span>Blur</span></label>
             <label><input type="radio" name="bg-mode" value="remove" /><span>Remove</span></label>
           </fieldset>
+          <fieldset class="segmented" id="bg-source">
+            <legend class="sr-only">Background selection</legend>
+            <label><input type="radio" name="bg-source" value="auto" checked /><span>Auto</span></label>
+            <label><input type="radio" name="bg-source" value="paint" /><span>Paint BG</span></label>
+          </fieldset>
+          <p class="control-hint" id="bg-mask-hint" hidden>Drag over areas that should be treated as background.</p>
+          <div id="bg-mask-controls" hidden>
+            <label class="slider-row">
+              <span>Brush size <output id="bg-brush-value">32</output></span>
+              <input type="range" id="bg-brush-size" min="5" max="100" step="1" value="32" />
+            </label>
+            <div class="inpaint-buttons">
+              <button id="bg-mask-undo" class="btn btn-secondary" type="button">↶ Undo</button>
+              <button id="bg-mask-clear" class="btn btn-secondary" type="button">🗑️ Clear</button>
+            </div>
+          </div>
           <label class="slider-row" id="blur-strength-row">
             <span>Blur strength <output id="blur-value">15</output></span>
             <input type="range" id="blur-strength" min="1" max="50" value="15" />
@@ -273,6 +289,6 @@
     </footer>
   </main>
 
-  <script type="module" src="app.js?v=19"></script>
+  <script type="module" src="app.js?v=20"></script>
 </body>
 </html>

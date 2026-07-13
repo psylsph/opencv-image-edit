@@ -33,6 +33,7 @@ def _to_b64_png(img: np.ndarray | None) -> str | None:
 async def process(
     file: UploadFile = File(...),
     settings: str = Form(...),
+    background_mask: UploadFile | None = File(default=None),
 ) -> dict:
     """Process an uploaded image through the pipeline.
 
@@ -64,10 +65,18 @@ async def process(
         image_process_total.labels(status="decode_error").inc()
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    bg_mask_img = None
+    if background_mask is not None:
+        try:
+            bg_mask_img = decode_to_bgr(await background_mask.read())
+        except DecodeError as exc:
+            image_process_total.labels(status="decode_error").inc()
+            raise HTTPException(status_code=400, detail=f"invalid background mask: {exc}") from exc
+
     started = time.perf_counter()
     status = "ok"
     try:
-        result: ProcessResult = process_pipeline(img_bgr, req)
+        result: ProcessResult = process_pipeline(img_bgr, req, background_mask=bg_mask_img)
     except ProcessingError as exc:
         status = "processing_error"
         image_process_total.labels(status=status).inc()
