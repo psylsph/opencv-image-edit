@@ -141,14 +141,9 @@ function bindEvents() {
     if (algoRow) algoRow.disabled = !e.target.checked;
   });
 
-  // Filters enabled toggle
-  $("#filters-enabled").addEventListener("change", (e) => {
-    const body = $("#filters-group .control-body");
-    if (body) {
-      body.style.opacity = e.target.checked ? "1" : "0.5";
-      body.style.pointerEvents = e.target.checked ? "auto" : "none";
-    }
-  });
+  // Filters enabled toggle. Do not disable pointer events on the whole body:
+  // that also blocks the checkbox itself, so manual enabling becomes impossible.
+  $("#filters-enabled").addEventListener("change", updateFilterControls);
 
   // Auto-expand a section's <details> when its toggle is switched on
   [
@@ -395,6 +390,29 @@ function setRowDisabled(rowSelector, disabled, groupSelector = null) {
     const input = row.querySelector("input, select");
     if (input) input.disabled = disabled;
   }
+}
+
+function updateFilterControls() {
+  const enabled = $("#filters-enabled")?.checked;
+  const body = $("#filters-group .control-body");
+  if (!body) return;
+  body.style.opacity = "1";
+  body.style.pointerEvents = "auto";
+  const controls = [
+    "#brightness",
+    "#contrast",
+    "#saturation",
+    "#sharpness",
+    "#vignette",
+    "#sepia",
+  ];
+  controls.forEach((selector) => {
+    const input = $(selector);
+    if (!input) return;
+    input.disabled = !enabled;
+    const row = input.closest(".slider-row, .checkbox-row");
+    if (row) row.style.opacity = enabled ? "1" : "0.5";
+  });
 }
 
 function updateBlurStrengthVisibility() {
