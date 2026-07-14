@@ -10,6 +10,7 @@ If the corresponding ``.pb`` model file is not present in the model
 directory, ``upscale()`` silently falls back to ``cv2.INTER_LANCZOS4``
 so the pipeline stays usable without any neural-network weights on disk.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -19,7 +20,6 @@ import cv2
 import numpy as np
 
 from app.exceptions import ModelNotFoundError
-
 
 SUPPORTED_ALGORITHMS = ("edsr", "espcn", "fsrcnn", "lapsrn")
 SUPPORTED_SCALES = (2, 3, 4)
@@ -33,7 +33,7 @@ class Upscaler:
     the cache so the next ``get()`` will re-read the model from disk.
     """
 
-    _instances: dict[tuple[str, int], "cv2.dnn_superres.DnnSuperResImpl"] = {}
+    _instances: dict[tuple[str, int], cv2.dnn_superres.DnnSuperResImpl] = {}
     _lock = Lock()
 
     @classmethod
@@ -42,7 +42,7 @@ class Upscaler:
         algorithm: str,
         scale: int,
         model_dir: Path,
-    ) -> "cv2.dnn_superres.DnnSuperResImpl":
+    ) -> cv2.dnn_superres.DnnSuperResImpl:
         """Get or create a cached ``DnnSuperResImpl`` for ``(algorithm, scale)``.
 
         Raises:
@@ -54,9 +54,7 @@ class Upscaler:
                 f"unsupported algorithm: {algorithm!r}; choose from {SUPPORTED_ALGORITHMS}"
             )
         if scale not in SUPPORTED_SCALES:
-            raise ValueError(
-                f"unsupported scale: {scale}; choose from {SUPPORTED_SCALES}"
-            )
+            raise ValueError(f"unsupported scale: {scale}; choose from {SUPPORTED_SCALES}")
 
         key = (algorithm, scale)
         if key in cls._instances:
@@ -102,7 +100,7 @@ def upscale(
 
     Returns:
         Upscaled image with spatial dims multiplied by ``scale``, same
-        number of channels as the input (``alpha`` is dropped if present).
+        number of channels as the input (alpha is preserved for BGRA inputs).
     """
     # --- passthrough -------------------------------------------------------
     if scale == 1:
@@ -111,13 +109,22 @@ def upscale(
     # --- resolve model dir -------------------------------------------------
     if model_dir is None:
         from app.config import get_settings
+
         model_dir = get_settings().model_dir
     model_dir = Path(model_dir)
 
     # --- normalize input to 3D BGR (DnnSuperResImpl rejects 2D / 4D) --------
+    alpha = None
     if img.ndim == 2:
         input_was_2d = True
         img_3d = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    elif img.ndim == 3 and img.shape[2] == 4:
+        # Preserve the alpha channel: upscale it with the same factor via
+        # LANCZOS4 and reattach afterwards. Without this, background removal
+        # (BGRA) + AI upscale silently dropped transparency.
+        input_was_2d = False
+        alpha = img[:, :, 3]
+        img_3d = img[:, :, :3]
     else:
         input_was_2d = False
         img_3d = img[:, :, :3]  # drop alpha if present
@@ -134,6 +141,15 @@ def upscale(
             fy=scale,
             interpolation=cv2.INTER_LANCZOS4,
         )
+
+    # --- reattach upscaled alpha if the input had one -----------------------
+    if alpha is not None:
+        alpha_up = cv2.resize(
+            alpha,
+            (out.shape[1], out.shape[0]),
+            interpolation=cv2.INTER_LANCZOS4,
+        )
+        out = np.dstack([out, alpha_up])
 
     # --- restore 2D output if the input was grayscale ----------------------
     if input_was_2d:

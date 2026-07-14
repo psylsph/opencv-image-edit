@@ -284,7 +284,9 @@ function bindEvents() {
           sdPollTimer = null;
           progressText.textContent = "✅ Download complete!";
           sdAvailable = true;
-          updateSdWarning();
+          if (btn) { btn.disabled = false; btn.textContent = "Download"; }
+          if (progress) progress.hidden = true;
+          updateGenWarning();
         } else {
           clearInterval(sdPollTimer);
           sdPollTimer = null;
@@ -299,7 +301,7 @@ function bindEvents() {
     }, 5000);
   }
 
-  // Check SD + OpenAI status on page load
+  // Check SD status on page load
   checkSdStatus();
   // Undo + Clear (paint mode)
   $("#inpaint-undo").addEventListener("click", undoMaskStroke);
@@ -364,7 +366,7 @@ function setRowDisabled(rowSelector, disabled, groupSelector = null) {
   const row = $(rowSelector);
   if (row) {
     row.style.opacity = disabled ? "0.5" : "1";
-    row.style.pointerEvents = disabled ? "auto" : "auto";  // sliders still respond for visual feedback
+    row.style.pointerEvents = "auto";  // sliders still respond for visual feedback
     const input = row.querySelector("input, select");
     if (input) input.disabled = disabled;
   }
@@ -1019,13 +1021,14 @@ async function processInpaint() {
     final: data.final,
     inpainted: data.final,   // also show under the dedicated tab
     output_size: data.output_size,
-    elapsed_seconds: 0,       // server doesn't return this; show 0
+    elapsed_seconds: data.elapsed_seconds ?? 0,
   };
   state.lastResult = wrapped;
   state.inpaintResult = data;
   renderOutputs(wrapped);
   const sizeStr = (w && h) ? ` · ${w}×${h}` : "";
-  setStatus(`Inpainted (${algorithm}, r=${radius})${sizeStr}`, "success");
+  const secs = (data.elapsed_seconds ?? 0).toFixed(2);
+  setStatus(`Inpainted (${algorithm}, r=${radius}) in ${secs}s${sizeStr}`, "success");
   state.processing = false;
   updateProcessButton();
 }

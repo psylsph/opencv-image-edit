@@ -10,13 +10,14 @@ is the preprocessing/postprocessing contract:
 
 Real-model integration is verified in the smoke test (not in pytest).
 """
+
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from app.models.lama import LaMa, _INPUT_SIZE
-
+from app.exceptions import ModelNotFoundError
+from app.models.lama import _INPUT_SIZE, LaMa
 
 # ---------------------------------------------------------------------------
 # Singleton lifecycle (consistent with MobileSAM pattern)
@@ -26,22 +27,18 @@ from app.models.lama import LaMa, _INPUT_SIZE
 def test_lama_singleton_returns_same_instance(monkeypatch, tmp_path):
     """Two .get() calls with no model on disk should both raise the same error."""
     LaMa.clear_cache()
-    monkeypatch.setattr(
-        "app.models.lama._MODEL_FILENAME", "definitely_does_not_exist.onnx"
-    )
-    with pytest.raises(Exception):
+    monkeypatch.setattr("app.models.lama._MODEL_FILENAME", "definitely_does_not_exist.onnx")
+    with pytest.raises(ModelNotFoundError):
         LaMa.get(model_dir=tmp_path)
-    with pytest.raises(Exception):
+    with pytest.raises(ModelNotFoundError):
         LaMa.get(model_dir=tmp_path)
 
 
 def test_lama_clear_cache_resets_singleton(monkeypatch, tmp_path):
     """clear_cache() must allow re-loading the model from a different dir."""
     LaMa.clear_cache()
-    monkeypatch.setattr(
-        "app.models.lama._MODEL_FILENAME", "still_missing.onnx"
-    )
-    with pytest.raises(Exception):
+    monkeypatch.setattr("app.models.lama._MODEL_FILENAME", "still_missing.onnx")
+    with pytest.raises(ModelNotFoundError):
         LaMa.get(model_dir=tmp_path)
     assert LaMa._instance is None
     LaMa.clear_cache()
@@ -115,7 +112,7 @@ def test_lama_postprocess_clamps_out_of_range():
     tensor = np.array([[[[300.0, -50.0]]] * 3], dtype=np.float32)  # 1x3x1x2
     out = LaMa._postprocess(tensor, target_h=1, target_w=2)
     assert out[0, 0, 0] == 255  # clamped from 300
-    assert out[0, 1, 0] == 0    # clamped from -50
+    assert out[0, 1, 0] == 0  # clamped from -50
 
 
 def test_lama_postprocess_resizes_to_target_dimensions():

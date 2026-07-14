@@ -7,8 +7,13 @@ complex fills, but much slower (~30-60s on CPU).
 Architecture:
   1. CLIP text encoder → text embeddings (conditioning)
   2. VAE encoder → image latents
-  3. UNet (9-channel inpainting) → noise prediction in DDIM loop
+  3. UNet (4-channel base SD 1.5) → noise prediction in DDIM loop
   4. VAE decoder → final image
+
+This uses the **base** 4-channel SD 1.5 UNet, not the 9-channel inpainting
+variant. Inpainting is done "legacy" style: the full image is denoised and
+re-blended with the original image latents in the masked region at every
+step (see ``_run_unet`` / the denoising loop).
 
 All inference via ONNX Runtime. Scheduler (DDIM) and tokenizer (CLIP BPE)
 implemented in pure numpy / Rust.
@@ -20,6 +25,7 @@ Model source: modularai/stable-diffusion-1.5-onnx (fp32 ONNX)
   - vae_decoder/model.onnx (~188MB)
   - tokenizer/vocab.json, merges.txt (~1MB)
 """
+
 from __future__ import annotations
 
 import logging
@@ -49,7 +55,7 @@ _DEFAULT_NEGATIVE = "low quality, blurry, deformed, artifacts"
 class SDInpaint:
     """Lazy-loaded, thread-safe singleton for SD 1.5 inpainting via ONNX."""
 
-    _instance: "SDInpaint | None" = None
+    _instance: SDInpaint | None = None
     _lock = Lock()
 
     def __init__(self, model_dir: Path | str) -> None:
@@ -76,19 +82,23 @@ class SDInpaint:
 
         # Load all 4 ONNX models
         self._text_encoder = ort.InferenceSession(
-            str(required["text_encoder"]), sess_options=so,
+            str(required["text_encoder"]),
+            sess_options=so,
             providers=["CPUExecutionProvider"],
         )
         self._unet = ort.InferenceSession(
-            str(required["unet"]), sess_options=so,
+            str(required["unet"]),
+            sess_options=so,
             providers=["CPUExecutionProvider"],
         )
         self._vae_encoder = ort.InferenceSession(
-            str(required["vae_encoder"]), sess_options=so,
+            str(required["vae_encoder"]),
+            sess_options=so,
             providers=["CPUExecutionProvider"],
         )
         self._vae_decoder = ort.InferenceSession(
-            str(required["vae_decoder"]), sess_options=so,
+            str(required["vae_decoder"]),
+            sess_options=so,
             providers=["CPUExecutionProvider"],
         )
 
@@ -101,7 +111,7 @@ class SDInpaint:
         logger.info("SD inpainting models loaded successfully.")
 
     @classmethod
-    def get(cls, model_dir: Path | str | None = None) -> "SDInpaint":
+    def get(cls, model_dir: Path | str | None = None) -> SDInpaint:
         if cls._instance is not None:
             return cls._instance
         with cls._lock:
@@ -109,6 +119,7 @@ class SDInpaint:
                 return cls._instance
             if model_dir is None:
                 from app.config import get_settings
+
                 model_dir = get_settings().model_dir
             cls._instance = SDInpaint(model_dir)
             return cls._instance
@@ -123,6 +134,7 @@ class SDInpaint:
         """Check if SD model files exist without loading them."""
         if model_dir is None:
             from app.config import get_settings
+
             model_dir = get_settings().model_dir
         sd_dir = Path(model_dir) / "sd-inpainting"
         return (sd_dir / "unet" / "model.onnx").exists()
@@ -138,9 +150,7 @@ class SDInpaint:
         Row 1: conditional (prompt)
         """
         tokens_cond = np.array([self._tokenizer.tokenize(prompt)], dtype=np.int32)
-        tokens_uncond = np.array(
-            [self._tokenizer.tokenize(negative_prompt)], dtype=np.int32
-        )
+        tokens_uncond = np.array([self._tokenizer.tokenize(negative_prompt)], dtype=np.int32)
 
         input_name = self._text_encoder.get_inputs()[0].name
         emb_cond = self._text_encoder.run(None, {input_name: tokens_cond})[0]
@@ -161,9 +171,7 @@ class SDInpaint:
     def _decode_latent(self, latent: np.ndarray) -> np.ndarray:
         """Decode VAE latent (1, 4, 64, 64) → RGB image (512, 512, 3)."""
         input_name = self._vae_decoder.get_inputs()[0].name
-        decoded = self._vae_decoder.run(
-            None, {input_name: latent / _VAE_SCALE_FACTOR}
-        )[0]
+        decoded = self._vae_decoder.run(None, {input_name: latent / _VAE_SCALE_FACTOR})[0]
         # CHW -> HWC, denormalize to [0, 255]
         img = decoded[0].transpose(1, 2, 0)
         img = (img / 2 + 0.5).clip(0, 1)
@@ -186,10 +194,14 @@ class SDInpaint:
         timestep = np.array([t, t], dtype=np.int64)
 
         # Run UNet
-        inputs = {inp.name: val for inp, val in zip(
-            self._unet.get_inputs(),
-            [unet_input, timestep, text_embeds],
-        )}
+        inputs = {
+            inp.name: val
+            for inp, val in zip(
+                self._unet.get_inputs(),
+                [unet_input, timestep, text_embeds],
+                strict=True,
+            )
+        }
         noise_pred = self._unet.run(None, inputs)[0]
 
         # Classifier-free guidance
@@ -256,7 +268,8 @@ class SDInpaint:
 
         # Apply forward diffusion: add noise to image latents
         latents = self._scheduler.add_noise(
-            image_latent, init_noise,
+            image_latent,
+            init_noise,
             np.array([timesteps[0]], dtype=np.int64),
         )
 

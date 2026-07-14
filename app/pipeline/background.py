@@ -11,6 +11,7 @@ The mask is always interpreted as ``alpha``:
   mask == 1.0  → fully foreground (sharp / opaque)
   mask == 0.0  → fully background (blurred / transparent)
 """
+
 from __future__ import annotations
 
 import cv2
@@ -50,8 +51,7 @@ def apply_background_blur(
 
     blurred = cv2.GaussianBlur(img_bgr, (0, 0), sigmaX=blur_strength)
     alpha = mask[:, :, np.newaxis].astype(np.float32)
-    out = (img_bgr.astype(np.float32) * alpha +
-           blurred.astype(np.float32) * (1.0 - alpha))
+    out = img_bgr.astype(np.float32) * alpha + blurred.astype(np.float32) * (1.0 - alpha)
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
@@ -89,8 +89,5 @@ def get_alpha_debug(mask: np.ndarray) -> np.ndarray:
     if mask.dtype != np.float32:
         mask = mask.astype(np.float32)
     lo, hi = float(mask.min()), float(mask.max())
-    if hi > lo:
-        stretched = (mask - lo) * 255.0 / (hi - lo)
-    else:
-        stretched = np.zeros_like(mask)
+    stretched = (mask - lo) * 255.0 / (hi - lo) if hi > lo else np.zeros_like(mask)
     return np.clip(stretched, 0, 255).astype(np.uint8)

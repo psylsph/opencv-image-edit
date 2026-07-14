@@ -7,6 +7,7 @@ Pillow is used ONLY as a HEIC/HEIF decoder shim. For all other formats we
 use cv2.imdecode/cv2.imencode directly to keep OpenCV as the single source
 of truth for image I/O.
 """
+
 from __future__ import annotations
 
 from io import BytesIO
@@ -16,7 +17,6 @@ import numpy as np
 from PIL import Image
 
 from app.exceptions import DecodeError, EncodeError
-
 
 # Register HEIC opener once at import time
 try:
@@ -56,9 +56,7 @@ def decode_to_bgr(data: bytes) -> np.ndarray:
     if _is_heic(data):
         try:
             pil_img = Image.open(BytesIO(data))
-            pil_img = pil_img.convert(
-                "RGBA" if pil_img.mode in ("RGBA", "LA", "P") else "RGB"
-            )
+            pil_img = pil_img.convert("RGBA" if pil_img.mode in ("RGBA", "LA", "P") else "RGB")
             arr_rgb = np.array(pil_img)
             if arr_rgb.ndim == 3 and arr_rgb.shape[2] == 4:
                 return cv2.cvtColor(arr_rgb, cv2.COLOR_RGBA2BGRA)
@@ -70,9 +68,7 @@ def decode_to_bgr(data: bytes) -> np.ndarray:
     arr = np.frombuffer(data, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)
     if img is None:
-        raise DecodeError(
-            "failed to decode image (unsupported format or corrupt data)"
-        )
+        raise DecodeError("failed to decode image (unsupported format or corrupt data)")
     if img.ndim == 2:
         img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
     return img
@@ -102,9 +98,19 @@ def encode_format(img: np.ndarray, ext: str, **kwargs) -> bytes:
     Args:
         img: BGR/BGRA numpy array.
         ext: file extension including leading dot, e.g. ".webp".
-        **kwargs: passed to cv2.imencode (e.g. imwrite_params).
+        **kwargs: encode parameters. Each key is uppercased and prefixed with
+            ``IMWRITE_`` to resolve the matching ``cv2.IMWRITE_*`` constant,
+            e.g. ``quality=80`` -> ``cv2.IMWRITE_QUALITY`` (note: for JPEG the
+            constant is ``IMWRITE_JPEG_QUALITY``, so pass ``jpeg_quality=80``).
     """
-    return _encode(img, ext, tuple(kwargs.items()))
+    params: list[int] = []
+    for key, value in kwargs.items():
+        const_name = f"IMWRITE_{key.upper()}"
+        if not hasattr(cv2, const_name):
+            raise EncodeError(f"unknown encode parameter: {key!r} (looked for cv2.{const_name})")
+        params.append(int(getattr(cv2, const_name)))
+        params.append(int(value))
+    return _encode(img, ext, tuple(params))
 
 
 def _encode(img: np.ndarray, ext: str, params: tuple) -> bytes:

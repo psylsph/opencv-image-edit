@@ -13,6 +13,7 @@ The scheduler supports:
   - add_noise(latents, noise, timestep): forward diffusion
   - step(model_output, timestep, sample): reverse diffusion (denoise)
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -37,8 +38,8 @@ class DDIMScheduler:
         elif beta_schedule == "scaled_linear":
             betas = (
                 np.linspace(
-                    beta_start ** 0.5,
-                    beta_end ** 0.5,
+                    beta_start**0.5,
+                    beta_end**0.5,
                     num_train_timesteps,
                     dtype=np.float32,
                 )
@@ -51,9 +52,7 @@ class DDIMScheduler:
         self.alphas_cumprod = np.cumprod(self.alphas)
 
         self.final_alpha_cumprod = (
-            np.array([1.0], dtype=np.float32)
-            if set_alpha_to_one
-            else self.alphas_cumprod[0:1]
+            np.array([1.0], dtype=np.float32) if set_alpha_to_one else self.alphas_cumprod[0:1]
         )
 
         self.initial_alpha_cumprod = self.alphas_cumprod
@@ -65,9 +64,7 @@ class DDIMScheduler:
         self.num_inference_steps = num_inference_steps
         step_ratio = self.num_train_timesteps // num_inference_steps
         self.timesteps = (
-            (np.arange(0, num_inference_steps) * step_ratio)
-            .round()[::-1]
-            .astype(np.int64)
+            (np.arange(0, num_inference_steps) * step_ratio).round()[::-1].astype(np.int64)
         )
 
     def _get_variance(self, timestep: int, prev_timestep: int) -> float:
@@ -78,9 +75,7 @@ class DDIMScheduler:
             else self.final_alpha_cumprod[0]
         )
         beta_prod_t = 1.0 - alpha_prod_t
-        beta_prod_t_prev = 1.0 - alpha_prod_t_prev
-        variance = (1.0 - alpha_prod_t_prev) / (1.0 - alpha_prod_t) * beta_prod_t
-        return variance
+        return (1.0 - alpha_prod_t_prev) / (1.0 - alpha_prod_t) * beta_prod_t
 
     def add_noise(
         self,
@@ -90,7 +85,7 @@ class DDIMScheduler:
     ) -> np.ndarray:
         """Forward diffusion: add noise to samples at given timesteps."""
         alphas_cumprod = self.alphas_cumprod[timesteps].reshape(-1, 1, 1, 1)
-        sqrt_alpha_prod = alphas_cumprod ** 0.5
+        sqrt_alpha_prod = alphas_cumprod**0.5
         sqrt_one_minus_alpha_prod = (1.0 - alphas_cumprod) ** 0.5
         return sqrt_alpha_prod * original_samples + sqrt_one_minus_alpha_prod * noise
 
@@ -114,7 +109,7 @@ class DDIMScheduler:
         beta_prod_t = 1.0 - alpha_prod_t
 
         # Predict the original sample x_0
-        pred_original_sample = (sample - beta_prod_t ** 0.5 * model_output) / alpha_prod_t ** 0.5
+        pred_original_sample = (sample - beta_prod_t**0.5 * model_output) / alpha_prod_t**0.5
 
         # Clip
         if self.clip_sample:
@@ -124,6 +119,4 @@ class DDIMScheduler:
         pred_sample_direction = (1.0 - alpha_prod_t_prev) ** 0.5 * model_output
 
         # Compute x_{t-1}
-        prev_sample = alpha_prod_t_prev ** 0.5 * pred_original_sample + pred_sample_direction
-
-        return prev_sample
+        return alpha_prod_t_prev**0.5 * pred_original_sample + pred_sample_direction

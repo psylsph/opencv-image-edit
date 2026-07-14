@@ -12,6 +12,7 @@ Usage:
 Environment:
     MODEL_DIR — default target directory (defaults to ./models)
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -22,7 +23,6 @@ import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
-
 
 # Pinned model URLs and expected SHA256 hashes.
 # Hashes are filled in after the first successful download.
@@ -118,7 +118,9 @@ def _download(url: str, dest: Path, max_retries: int = 10) -> None:
                         try:
                             chunk = resp.read(CHUNK_SIZE)
                         except TimeoutError:
-                            print(f"\n  Read timeout, flushing and retrying... ({attempt}/{max_retries})")
+                            print(
+                                f"\n  Read timeout, flushing and retrying... ({attempt}/{max_retries})"
+                            )
                             f.flush()
                             break
                         if not chunk:
@@ -173,6 +175,7 @@ def _process_zip_entry(name: str, meta: dict, target_dir: Path) -> None:
         sidecar = target_dir / f".{name}.sha256.json"
         if sidecar.exists():
             import json
+
             try:
                 known = json.loads(sidecar.read_text())
                 ok = True
@@ -214,11 +217,11 @@ def _process_zip_entry(name: str, meta: dict, target_dir: Path) -> None:
             if actual != meta["sha256"]:
                 tmp_zip.unlink()
                 raise SystemExit(
-                    f"ERROR: SHA256 mismatch for {name}: "
-                    f"expected {meta['sha256']}, got {actual}"
+                    f"ERROR: SHA256 mismatch for {name}: expected {meta['sha256']}, got {actual}"
                 )
         # Extract mapped files
         import json
+
         per_file_hashes: dict[str, str] = {}
         with zipfile.ZipFile(tmp_zip, "r") as zf:
             names_in_zip = set(zf.namelist())
@@ -340,7 +343,7 @@ def download_sd_models(target_dir: Path) -> None:
 
     print(f"  Downloading to: {sd_dir}")
     print(f"  Source: {_SD_REPO}")
-    print(f"  Total: ~4GB (this will take several minutes)")
+    print("  Total: ~4GB (this will take several minutes)")
     print()
 
     base_url = f"https://huggingface.co/{_SD_REPO}/resolve/main"
@@ -348,12 +351,23 @@ def download_sd_models(target_dir: Path) -> None:
         dest = sd_dir / subdir_path
         dest.parent.mkdir(parents=True, exist_ok=True)
 
-        if dest.exists() and dest.stat().st_size > 100:
-            print(f"  [{subdir_path}] already present ({dest.stat().st_size / 1024 / 1024:.0f} MB)")
-            continue
-
-        # If partial is <100 bytes, treat as missing and start fresh (avoid 416)
+        expected_bytes = size_mb * 1024 * 1024
         if dest.exists():
+            have = dest.stat().st_size
+            # Large files (>5 MB) are only trusted once they're >=90% of the
+            # expected size — a partial 3 GB ``model.onnx_data`` used to be
+            # silently skipped as "already present". Small files (tokenizer
+            # config, the small UNet graph) just need to be non-trivially
+            # present; their ``size_mb`` entries are approximate.
+            big = expected_bytes > 5 * 1024 * 1024
+            complete = (have >= 0.9 * expected_bytes) if big else (have > 100)
+            if complete:
+                print(f"  [{subdir_path}] already present ({have / 1024 / 1024:.0f} MB)")
+                continue
+            print(
+                f"  [{subdir_path}] partial ({have / 1024 / 1024:.1f} MB of "
+                f"~{size_mb} MB) — re-downloading from scratch"
+            )
             dest.unlink()
 
         print(f"  [{subdir_path}] downloading (~{size_mb} MB)...")

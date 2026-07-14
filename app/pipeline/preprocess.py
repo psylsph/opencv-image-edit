@@ -1,4 +1,5 @@
 """Image pre-processing: resize oversized images down to a max dimension."""
+
 from __future__ import annotations
 
 import cv2
@@ -39,8 +40,7 @@ def resize_if_needed(
 
     # INTER_AREA is best for downscaling (mosaicing); INTER_CUBIC for upscaling.
     interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_CUBIC
-    resized = cv2.resize(img, (new_w, new_h), interpolation=interp)
-    return resized
+    return cv2.resize(img, (new_w, new_h), interpolation=interp)
 
 
 def get_image_dimensions(img: np.ndarray) -> tuple[int, int]:

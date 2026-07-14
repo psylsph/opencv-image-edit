@@ -1,11 +1,12 @@
 """FastAPI application entry point."""
+
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.api import health, inpaint, presets, process, sd, segment
@@ -52,7 +53,10 @@ def create_app() -> FastAPI:
     @app.get("/metrics")
     def metrics():
         body, content_type = metrics_response()
-        return JSONResponse(content=body.decode("utf-8"), media_type=content_type)
+        # Prometheus exposition format is plain text, NOT JSON — return the raw
+        # bytes with the correct content type (previously this was wrapped in
+        # JSONResponse, which quoted/escaped the text and broke scrapers).
+        return Response(content=body, media_type=content_type)
 
     # Static files (web/) at root
     web_dir = Path(__file__).parent.parent / "web"
@@ -67,6 +71,7 @@ app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
+
     settings = get_settings()
     uvicorn.run(
         "app.main:app",

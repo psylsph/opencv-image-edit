@@ -14,6 +14,7 @@ model (``u2netp.onnx``) and the EDSR x2 model are present in the repo's
 ``models/`` directory, so we exercise the real model path. If a model is
 missing in a CI environment, those tests are skipped rather than failed.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -32,7 +33,6 @@ from app.api.schemas import (
 from app.exceptions import ModelNotFoundError, ProcessingError
 from app.pipeline import process_pipeline
 from app.pipeline.__init__ import ProcessResult
-
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -63,9 +63,7 @@ def _upscale_model_available(algorithm: str = "edsr", scale: int = 2) -> bool:
 
     from app.config import get_settings
 
-    return (
-        Path(get_settings().model_dir) / f"{algorithm.upper()}_x{scale}.pb"
-    ).exists()
+    return (Path(get_settings().model_dir) / f"{algorithm.upper()}_x{scale}.pb").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +80,7 @@ def test_pipeline_imports():
 
 def test_pipeline_process_result_dataclass_exists():
     """ProcessResult is exposed on app.pipeline.__init__ with the expected fields."""
-    fields = {f for f in ProcessResult.__dataclass_fields__}
+    fields = set(ProcessResult.__dataclass_fields__)
     # All six named outputs in the result (mask and grain_only can be None)
     for name in ("original", "final", "before_after", "diff", "mask", "upscaled"):
         assert name in fields, f"missing ProcessResult field: {name}"
@@ -90,7 +88,7 @@ def test_pipeline_process_result_dataclass_exists():
 
 def test_pipeline_process_result_grain_only_field():
     """grain_only is also exposed (a 2D uint8 viz, or None)."""
-    fields = {f for f in ProcessResult.__dataclass_fields__}
+    fields = set(ProcessResult.__dataclass_fields__)
     assert "grain_only" in fields
 
 
@@ -125,9 +123,7 @@ def test_pipeline_passthrough_when_all_disabled():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(
-    not _matting_model_available(), reason="u2netp.onnx not present"
-)
+@pytest.mark.skipif(not _matting_model_available(), reason="u2netp.onnx not present")
 def test_pipeline_background_blur_runs():
     """Background blur stage produces a different image (or matching shape)."""
     img = _bgr(96, 64)
@@ -144,15 +140,11 @@ def test_pipeline_background_blur_runs():
     assert result.mask.shape == img.shape[:2]
 
 
-@pytest.mark.skipif(
-    not _matting_model_available(), reason="u2netp.onnx not present"
-)
+@pytest.mark.skipif(not _matting_model_available(), reason="u2netp.onnx not present")
 def test_pipeline_background_remove_returns_bgra():
     """Background remove returns a 4-channel BGRA final image."""
     img = _bgr(96, 64)
-    request = ProcessRequest(
-        background=BackgroundRequest(enabled=True, mode="remove")
-    )
+    request = ProcessRequest(background=BackgroundRequest(enabled=True, mode="remove"))
     result = process_pipeline(img, request)
     assert result.final.ndim == 3
     assert result.final.shape[2] == 4
@@ -187,9 +179,7 @@ def test_pipeline_grain_runs():
 def test_pipeline_upscale_runs_scale2():
     """scale=2 must double both spatial dimensions."""
     img = _bgr(64, 48)
-    request = ProcessRequest(
-        upscale=UpscaleRequest(enabled=True, scale=2, algorithm="interp")
-    )
+    request = ProcessRequest(upscale=UpscaleRequest(enabled=True, scale=2, algorithm="interp"))
     result = process_pipeline(img, request)
     assert result.final.shape[0] == img.shape[0] * 2
     assert result.final.shape[1] == img.shape[1] * 2
@@ -201,9 +191,7 @@ def test_pipeline_upscale_runs_scale2():
 def test_pipeline_upscale_runs_scale4():
     """scale=4 must quadruple both spatial dimensions."""
     img = _bgr(40, 32)
-    request = ProcessRequest(
-        upscale=UpscaleRequest(enabled=True, scale=4, algorithm="interp")
-    )
+    request = ProcessRequest(upscale=UpscaleRequest(enabled=True, scale=4, algorithm="interp"))
     result = process_pipeline(img, request)
     assert result.final.shape[0] == img.shape[0] * 4
     assert result.final.shape[1] == img.shape[1] * 4
@@ -217,9 +205,7 @@ def test_pipeline_upscale_runs_scale4():
 def test_pipeline_filters_brightness_runs():
     """brightness=0.5 should produce a darker image than the original."""
     img = _bgr(96, 64)
-    request = ProcessRequest(
-        filters=FiltersRequest(enabled=True, brightness=0.5)
-    )
+    request = ProcessRequest(filters=FiltersRequest(enabled=True, brightness=0.5))
     result = process_pipeline(img, request)
     # Mean luma must drop
     assert result.final.mean() < img.mean()
@@ -242,9 +228,7 @@ def test_pipeline_filters_inactive_when_disabled():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(
-    not _matting_model_available(), reason="u2netp.onnx not present"
-)
+@pytest.mark.skipif(not _matting_model_available(), reason="u2netp.onnx not present")
 def test_pipeline_chains_in_order():
     """All stages on, the final image should reflect every stage's effect."""
     img = _bgr(80, 56)
@@ -280,9 +264,7 @@ def test_pipeline_chains_in_order():
 def test_pipeline_validation_blur_out_of_range():
     """ProcessRequest rejects blur_strength above 50."""
     with pytest.raises(ValidationError):
-        ProcessRequest(
-            background=BackgroundRequest(enabled=True, mode="blur", blur_strength=100)
-        )
+        ProcessRequest(background=BackgroundRequest(enabled=True, mode="blur", blur_strength=100))
 
 
 def test_pipeline_validation_scale_out_of_range():
@@ -396,6 +378,7 @@ def test_pipeline_missing_matting_model_propagates_error():
     saved_singleton = matting._singleton
     orig_getter = matting.get_matting_model
     try:
+
         class _Broken:
             def predict(self, _img):
                 raise ModelNotFoundError("no model")
@@ -403,7 +386,9 @@ def test_pipeline_missing_matting_model_propagates_error():
         matting.get_matting_model = lambda *a, **k: _Broken()  # type: ignore[assignment]
         # Force the orchestrator module to re-resolve the symbol from app.models.matting
         import importlib
+
         import app.pipeline.__init__ as orch
+
         importlib.reload(orch)
         try:
             img = _bgr(80, 60)

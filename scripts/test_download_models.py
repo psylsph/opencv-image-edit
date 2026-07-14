@@ -4,12 +4,15 @@ Validates the model registry and the idempotency contract of the download
 script. Does NOT perform real network downloads — that is verified manually
 during the build pipeline. These tests are safe to run in any environment.
 """
+
 from __future__ import annotations
 
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 # Make scripts/ importable so we can import the download_models module directly.
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -50,28 +53,42 @@ def test_no_duplicate_urls():
     assert len(urls) == len(set(urls)), f"Duplicate URLs found: {urls}"
 
 
+def test_verify_idempotent_in_process(tmp_path, monkeypatch):
+    """_verify is a no-op for a file whose hash matches the registry.
+
+    This exercises the idempotency contract directly, with no subprocess and
+    no network access, so it runs identically in any environment.
+    """
+    import download_models as dm
+
+    content = b"deterministic bytes for a fake model file"
+    name = "fake_model.onnx"
+    dest = tmp_path / name
+    dest.write_bytes(content)
+    sha = dm._sha256(dest)
+
+    monkeypatch.setattr(
+        dm,
+        "MODELS",
+        {name: {"url": "https://example.invalid/x", "sha256": sha, "size_mb": 1.0}},
+    )
+
+    assert dm._verify(dest, sha) is True
+    before = dest.stat().st_mtime_ns
+    assert dm._verify(dest, sha) is True  # second check is a no-op
+    assert dest.stat().st_mtime_ns == before
+
+
 def test_target_dir_creation_is_idempotent(tmp_path):
-    """Running the script against a fresh dir twice should be a no-op the second time."""
-    # First, fabricate valid files in tmp_path with the expected hashes so
-    # the script can verify them and skip. We don't actually need real model
-    # binaries — we just need the file to exist with the right hash.
-    # Since we don't want to mock MODELS (would defeat the test), we instead
-    # run the script in a no-op way: point it at the actual models dir,
-    # which we know is populated from CI. If models are missing, skip.
+    """Running the script against a populated dir twice is a no-op the 2nd time.
+
+    Requires the real base models to be present (populated CI / a dev box that
+    ran ``scripts/download_models.py``). Skipped otherwise — the offline
+    idempotency primitive is covered by ``test_verify_idempotent_in_process``.
+    """
     target = REPO_ROOT / "models"
     if not (target / "u2netp.onnx").exists():
-        # Fall back: just verify the script is well-formed by running --help-ish.
-        result = subprocess.run(
-            [sys.executable, str(SCRIPTS_DIR / "download_models.py"), str(tmp_path / "no-such")],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        # In the missing-models case the script will try to download. We don't
-        # have a network or model registry guaranteed; just check the script
-        # at least parsed and started.
-        assert result.returncode in (0, 1), f"unexpected exit code {result.returncode}"
-        return
+        pytest.skip("base models not present; idempotency verified in-process instead")
 
     # Real run: against the populated dir, must be idempotent.
     result = subprocess.run(

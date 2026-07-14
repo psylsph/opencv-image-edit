@@ -3,6 +3,7 @@
 SD 1.5 models are ~4GB and optional. These endpoints let the frontend
 check availability and trigger an on-demand download.
 """
+
 from __future__ import annotations
 
 import logging
@@ -10,6 +11,7 @@ import subprocess
 import sys
 import time
 import uuid
+from contextlib import suppress
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -22,8 +24,41 @@ router = APIRouter()
 
 # Track running download processes: task_id -> Popen
 _downloads: dict[str, subprocess.Popen] = {}
-# Track task metadata: task_id -> {log_path, started_at}
+# Track task metadata: task_id -> {log_path, log_fp, started_at, reaped}
 _download_meta: dict[str, dict] = {}
+# Keep at most this many finished tasks around for status polling.
+_MAX_FINISHED_TASKS = 10
+_FINISHED_TTL_SECONDS = 3600
+
+
+def _reap_finished() -> None:
+    """Close log file handles and evict old finished download tasks."""
+    now = time.time()
+    finished_ids = []
+    for tid, proc in _downloads.items():
+        meta = _download_meta.get(tid, {})
+        # Close the log file handle once the process has exited.
+        if proc.poll() is not None and meta.get("log_fp") is not None:
+            with suppress(OSError):
+                meta["log_fp"].close()
+            meta["log_fp"] = None
+            meta["reaped"] = True
+        if meta.get("reaped"):
+            finished_ids.append((tid, meta.get("started_at", now)))
+
+    # Evict oldest finished entries beyond the retention cap or TTL.
+    finished_ids.sort(key=lambda item: item[1])
+    evict = [tid for tid, started in finished_ids if now - started > _FINISHED_TTL_SECONDS]
+    over_cap = [tid for tid, _ in finished_ids if tid not in evict][
+        : max(0, len(finished_ids) - _MAX_FINISHED_TASKS)
+    ]
+    for tid in evict + over_cap:
+        meta = _download_meta.pop(tid, {})
+        fp = meta.get("log_fp")
+        if fp is not None:
+            with suppress(OSError):
+                fp.close()
+        _downloads.pop(tid, None)
 
 
 def _sd_dir() -> Path:
@@ -62,6 +97,8 @@ def sd_download() -> dict:
     Returns a task_id that can be polled via /api/v1/sd/download/{task_id}/status.
     Only one download can run at a time.
     """
+    _reap_finished()
+
     # Check if already running
     for tid, proc in list(_downloads.items()):
         if proc.poll() is None:
@@ -76,15 +113,24 @@ def sd_download() -> dict:
     cmd = [sys.executable, "scripts/download_models.py", str(settings.model_dir), "--sd-only"]
 
     logger.info("Starting SD model download (task_id=%s)", task_id)
-    log_file = open(log_path, "w")
+    # Open in a context where we own the handle so it can be closed once the
+    # child process exits (see _reap_finished). The child inherits the fd via
+    # stdout=; we keep the handle open until then because the child is still
+    # writing to it.
+    log_fp = open(log_path, "w")  # noqa: SIM115 - outlives this function; closed in _reap_finished
     proc = subprocess.Popen(
         cmd,
-        stdout=log_file,
+        stdout=log_fp,
         stderr=subprocess.STDOUT,
         cwd=str(Path(__file__).parent.parent.parent),
     )
     _downloads[task_id] = proc
-    _download_meta[task_id] = {"log_path": str(log_path), "started_at": time.time()}
+    _download_meta[task_id] = {
+        "log_path": str(log_path),
+        "log_fp": log_fp,
+        "started_at": time.time(),
+        "reaped": False,
+    }
 
     return {"started": True, "task_id": task_id}
 
@@ -95,10 +141,13 @@ def sd_download_status(task_id: str) -> dict:
     if task_id not in _download_meta:
         raise HTTPException(status_code=404, detail="unknown task_id")
 
-    meta = _download_meta[task_id]
+    # Close the log handle as soon as we notice the process has finished.
+    _reap_finished()
+
+    meta = _download_meta.get(task_id)
     proc = _downloads.get(task_id)
 
-    if proc is None:
+    if meta is None or proc is None:
         return {"status": "unknown", "returncode": None, "log_tail": ""}
 
     rc = proc.poll()

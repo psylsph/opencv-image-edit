@@ -8,6 +8,7 @@ Filter factor semantics (OpenCV port — cleaner API than the original Pillow on
 Where this departs from the original Pillow version (which used [-1, 1] offsets),
 the deviation is documented and the new API is what we test.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -26,7 +27,6 @@ from app.pipeline.filters import (
     apply_sepia,
     apply_unsharp_mask,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -168,6 +168,7 @@ def test_adjust_saturation_factor_2_preserves_shape(gradient: np.ndarray) -> Non
 
 def cv2_hsv(img: np.ndarray) -> np.ndarray:
     import cv2
+
     return cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
 
@@ -202,7 +203,7 @@ def _laplacian_energy(img: np.ndarray) -> float:
     g = img.astype(np.float32)
     dx = g[:, 1:, :] - g[:, :-1, :]
     dy = g[1:, :, :] - g[:-1, :, :]
-    return float((dx ** 2).mean() + (dy ** 2).mean())
+    return float((dx**2).mean() + (dy**2).mean())
 
 
 def test_adjust_sharpness_factor_2_increases_sharpness() -> None:
@@ -323,8 +324,6 @@ def test_apply_sepia_changes_color(gradient: np.ndarray) -> None:
     """
     out = apply_sepia(gradient)
     assert out.shape == gradient.shape
-    mean_r_in = float(gradient[:, :, 2].mean())
-    mean_b_in = float(gradient[:, :, 0].mean())
     mean_r_out = float(out[:, :, 2].mean())
     mean_b_out = float(out[:, :, 0].mean())
     # Original gradient: B grows along x, R is mixed -> we don't assume input order
