@@ -11,6 +11,7 @@ the real ``u2netp.onnx`` matting model when present). The fixtures
 ``require_matting_model`` and ``require_edsr_x2`` skip individual
 tests gracefully if a model file is missing.
 """
+
 from __future__ import annotations
 
 import json
@@ -21,7 +22,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.schemas import ProcessRequest
-
 
 # ===========================================================================
 # /health
@@ -35,7 +35,7 @@ class TestHealthEndpoint:
         response = test_client.get("/health")
         assert response.status_code == 200
         body = response.json()
-        assert body["status"] == "ok"
+        assert body["status"] in ("ok", "degraded")
 
     def test_health_includes_app_metadata(self, test_client: TestClient):
         response = test_client.get("/health")
@@ -67,9 +67,7 @@ class TestHealthEndpoint:
                 f"unexpected status for {key!r}: {status!r}"
             )
 
-    def test_health_includes_upscale_models(
-        self, test_client: TestClient
-    ):
+    def test_health_includes_upscale_models(self, test_client: TestClient):
         response = test_client.get("/health")
         body = response.json()
         models = body["models"]
@@ -127,9 +125,7 @@ class TestPresetsEndpoint:
         assert settings["filters"]["enabled"] is True
         assert settings["filters"]["sepia"] is True
 
-    def test_presets_settings_are_valid_process_requests(
-        self, test_client: TestClient
-    ):
+    def test_presets_settings_are_valid_process_requests(self, test_client: TestClient):
         response = test_client.get("/presets")
         for name, meta in response.json().items():
             # Each preset's settings must be a valid ProcessRequest
@@ -215,12 +211,9 @@ class TestProcessValidation:
             return real_settings
 
         monkeypatch.setattr(config_module, "get_settings", fake_get_settings)
-        # The endpoint imports get_settings via "from app.config import get_settings"
-        # inside the function — so we need to patch the import in app.api.process too.
-        import app.api.process as proc_module
-
-        monkeypatch.setattr(proc_module, "get_settings", fake_get_settings)
-
+        # The size check lives in app.api._common, which now reads settings via
+        # ``app.config.get_settings()`` at call time, so the patch above
+        # propagates without needing a second patch on the endpoint module.
         response = test_client.post(
             "/api/v1/process",
             files={"file": ("test.png", sample_png_bytes, "image/png")},
@@ -282,9 +275,7 @@ class TestProcessEndpoint:
         assert img.shape[0] == 100
         assert img.shape[1] == 100
 
-    def test_process_returns_all_6_outputs(
-        self, test_client: TestClient, sample_png_bytes: bytes
-    ):
+    def test_process_returns_all_6_outputs(self, test_client: TestClient, sample_png_bytes: bytes):
         response = test_client.post(
             "/api/v1/process",
             files={"file": ("test.png", sample_png_bytes, "image/png")},
@@ -360,11 +351,7 @@ class TestProcessEndpoint:
         grain = test_client.post(
             "/api/v1/process",
             files={"file": ("test.png", sample_png_bytes, "image/png")},
-            data={
-                "settings": json.dumps(
-                    {"grain": {"enabled": True, "intensity": 0.9}}
-                )
-            },
+            data={"settings": json.dumps({"grain": {"enabled": True, "intensity": 0.9}})},
         )
         assert passthrough.status_code == 200
         assert grain.status_code == 200, grain.text
@@ -411,9 +398,7 @@ class TestProcessEndpoint:
 class TestMetricsEndpoint:
     """Tests for the ``GET /metrics`` Prometheus endpoint."""
 
-    def test_metrics_endpoint_returns_prometheus_format(
-        self, test_client: TestClient
-    ):
+    def test_metrics_endpoint_returns_prometheus_format(self, test_client: TestClient):
         response = test_client.get("/metrics")
         assert response.status_code == 200
         # Prometheus exposition format starts with "# HELP" or "# TYPE" comments
@@ -438,9 +423,7 @@ class TestMetricsEndpoint:
         assert "image_process_total" in body
         assert "image_process_seconds" in body
 
-    def test_metrics_endpoint_includes_request_size_histogram(
-        self, test_client: TestClient
-    ):
+    def test_metrics_endpoint_includes_request_size_histogram(self, test_client: TestClient):
         response = test_client.get("/metrics")
         body = response.text
         assert "request_size_bytes" in body

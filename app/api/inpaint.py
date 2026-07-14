@@ -1,4 +1,5 @@
 """Object removal / inpainting endpoint."""
+
 from __future__ import annotations
 
 import base64
@@ -9,6 +10,7 @@ import cv2
 import numpy as np
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
+from app.api._common import read_image_bytes
 from app.exceptions import DecodeError, ModelNotFoundError, ValidationError
 from app.monitoring import image_process_seconds, image_process_total
 from app.pipeline.inpaint import inpaint
@@ -35,8 +37,8 @@ async def inpaint_endpoint(
                "telea" (fast), or "ns" (smoother).
     prompt: Text description for generative fill (algorithm="sd").
     """
-    img_bytes = await file.read()
-    mask_bytes = await mask.read()
+    img_bytes = await read_image_bytes(file)
+    mask_bytes = await read_image_bytes(mask)
 
     try:
         img = decode_to_bgr(img_bytes)
@@ -63,19 +65,22 @@ async def inpaint_endpoint(
     mask_ratio = float((mask_img > 0).mean())
     logger.info(
         "inpaint: img=%dx%d mask=%dx%d mask_coverage=%.1f%% algo=%s",
-        img.shape[1], img.shape[0], mask_img.shape[1], mask_img.shape[0],
-        mask_ratio * 100, algorithm,
+        img.shape[1],
+        img.shape[0],
+        mask_img.shape[1],
+        mask_img.shape[0],
+        mask_ratio * 100,
+        algorithm,
     )
 
     try:
-        result = inpaint(img, mask_img, radius=radius, algorithm=algorithm,
-                         iterations=iterations, prompt=prompt)
+        result = inpaint(
+            img, mask_img, radius=radius, algorithm=algorithm, iterations=iterations, prompt=prompt
+        )
     except ModelNotFoundError as exc:
         # LaMa model missing — count separately so /health + metrics reflect it
         image_process_total.labels(status="model_missing").inc()
-        image_process_seconds.labels(status="model_missing").observe(
-            time.perf_counter() - started
-        )
+        image_process_seconds.labels(status="model_missing").observe(time.perf_counter() - started)
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

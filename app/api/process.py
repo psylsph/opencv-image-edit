@@ -1,4 +1,5 @@
 """Image processing endpoint."""
+
 from __future__ import annotations
 
 import base64
@@ -7,8 +8,8 @@ import time
 import numpy as np
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
+from app.api._common import read_image_bytes
 from app.api.schemas import ProcessRequest
-from app.config import get_settings
 from app.exceptions import DecodeError, ProcessingError
 from app.monitoring import (
     image_process_seconds,
@@ -43,15 +44,8 @@ async def process(
     Returns:
         JSON with base64-encoded PNGs for final + 5 debug outputs.
     """
-    settings_obj = get_settings()
-    body = await file.read()
+    body = await read_image_bytes(file)
     request_size_bytes.observe(len(body))
-
-    if len(body) > settings_obj.max_image_size_mb * 1024 * 1024:
-        raise HTTPException(
-            status_code=413,
-            detail=f"file too large: {len(body)} bytes > {settings_obj.max_image_size_mb} MB",
-        )
 
     try:
         req = ProcessRequest.model_validate_json(settings)
