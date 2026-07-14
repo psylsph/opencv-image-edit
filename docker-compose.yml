@@ -9,7 +9,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: opencv-image-edit:1.2.0
+    image: opencv-image-edit:1.3.0
     container_name: opencv-image-edit
     restart: unless-stopped
     ports:
@@ -23,11 +23,8 @@ services:
       MAX_IMAGE_SIZE_MB: "10"
       MAX_IMAGE_DIMENSION: "1536"
       MODEL_DIR: "/home/app/models"
-      RATE_LIMIT_REQUESTS: "10"
-      RATE_LIMIT_PERIOD: "60"
       ENABLE_METRICS: "true"
       METRICS_PORT: "9090"
-      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
     volumes:
       - model-cache:/home/app/models
       - temp-data:/tmp/opencv-image-edit

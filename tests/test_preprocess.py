@@ -1,11 +1,11 @@
 """Tests for app.pipeline.preprocess — image resize helpers (TDD)."""
+
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
 from app.pipeline.preprocess import get_image_dimensions, resize_if_needed
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

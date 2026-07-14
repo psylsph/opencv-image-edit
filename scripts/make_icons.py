@@ -6,17 +6,19 @@ Creates two PNGs:
 
 Design: dark rounded square, accent-blue background, "CV" wordmark in the foreground color.
 """
+
 from __future__ import annotations
 
 import os
+
 from PIL import Image, ImageDraw, ImageFont
 
 OUT_DIR = "/home/stuart/hermes/opencv-image-edit/web/icons"
 os.makedirs(OUT_DIR, exist_ok=True)
 
-BG = (15, 15, 18)        # --bg
-ACCENT = (110, 168, 254) # --accent
-FG = (10, 10, 12)        # --accent-fg
+BG = (15, 15, 18)  # --bg
+ACCENT = (110, 168, 254)  # --accent
+FG = (10, 10, 12)  # --accent-fg
 
 # Try a few common font locations, fall back to default
 FONT_CANDIDATES = [
@@ -27,6 +29,7 @@ FONT_CANDIDATES = [
     "/Library/Fonts/Arial Bold.ttf",
     "/System/Library/Fonts/Helvetica.ttc",
 ]
+
 
 def find_font() -> str | None:
     for path in FONT_CANDIDATES:

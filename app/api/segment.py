@@ -1,4 +1,5 @@
 """Point-prompt object segmentation endpoint (MobileSAM)."""
+
 from __future__ import annotations
 
 import base64
@@ -8,11 +9,11 @@ import cv2
 import numpy as np
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
+from app.api._common import read_image_bytes
 from app.exceptions import DecodeError, ModelNotFoundError
-from app.monitoring import image_process_seconds, image_process_total
 from app.models.sam import segment_with_point
+from app.monitoring import image_process_seconds, image_process_total
 from app.pipeline.io import decode_to_bgr, encode_png
-
 
 router = APIRouter()
 
@@ -41,11 +42,16 @@ async def segment(
     Returns:
         JSON with the binary mask (PNG, base64 data URL) + IoU score.
     """
-    body = await file.read()
+    body = await read_image_bytes(file)
     try:
         img = decode_to_bgr(body)
     except DecodeError as exc:
         raise HTTPException(status_code=400, detail=f"invalid image: {exc}") from exc
+
+    # decode_to_bgr may return BGRA for transparent PNGs. Force 3-channel BGR
+    # so cv2.cvtColor (in the encoder) and the overlay compositing below work.
+    if img.ndim == 3 and img.shape[2] == 4:
+        img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
 
     h, w = img.shape[:2]
     if not (0 <= x < w and 0 <= y < h):
@@ -64,9 +70,7 @@ async def segment(
         # an operational concern, not a request failure. Let the AppError
         # exception handler convert this to 503.
         image_process_total.labels(status="model_missing").inc()
-        image_process_seconds.labels(status="model_missing").observe(
-            time.perf_counter() - started
-        )
+        image_process_seconds.labels(status="model_missing").observe(time.perf_counter() - started)
         raise
     except Exception as exc:
         status = "segment_error"
@@ -83,9 +87,9 @@ async def segment(
     red_layer = np.zeros_like(img)
     red_layer[:, :] = (60, 60, 230)  # BGR red
     alpha = (mask > 0).astype(np.float32)[:, :, np.newaxis] * 0.45
-    overlay = (
-        img.astype(np.float32) * (1 - alpha) + red_layer.astype(np.float32) * alpha
-    ).astype(np.uint8)
+    overlay = (img.astype(np.float32) * (1 - alpha) + red_layer.astype(np.float32) * alpha).astype(
+        np.uint8
+    )
     overlay_png = encode_png(overlay)
 
     return {

@@ -1,4 +1,5 @@
 """Tests for app.pipeline.io — image decode/encode helpers (HEIC + standard)."""
+
 from __future__ import annotations
 
 from io import BytesIO
@@ -15,7 +16,6 @@ from app.pipeline.io import (
     encode_jpeg,
     encode_png,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -73,9 +73,7 @@ def test_decode_jpeg_returns_bgr() -> None:
     # 64x64 solid blue image: B=200, G=50, R=30
     blue = np.zeros((64, 64, 3), dtype=np.uint8)
     blue[:] = (200, 50, 30)  # BGR
-    ok, buf = cv2.imencode(
-        ".jpg", blue, [int(cv2.IMWRITE_JPEG_QUALITY), 100]
-    )
+    ok, buf = cv2.imencode(".jpg", blue, [int(cv2.IMWRITE_JPEG_QUALITY), 100])
     assert ok
 
     result = decode_to_bgr(bytes(buf))

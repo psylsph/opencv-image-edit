@@ -4,11 +4,11 @@ Defines the histograms and counters used by the FastAPI process endpoint
 and the ``/metrics`` HTTP endpoint. The metrics HTTP server is started
 in the FastAPI ``lifespan`` hook when ``settings.enable_metrics`` is True.
 """
+
 from __future__ import annotations
 
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from prometheus_client import start_http_server as _start_http_server
-
 
 # Histograms
 image_process_seconds = Histogram(

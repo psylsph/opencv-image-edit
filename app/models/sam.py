@@ -20,6 +20,7 @@ the 4th ("everything") mask always wins on IoU but is useless, so we pick
 the best of candidates 0..2 by IoU, with a fallback to candidate 3 if all
 have IoU < 0.5.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -30,7 +31,6 @@ import numpy as np
 import onnxruntime as ort
 
 from app.exceptions import ModelNotFoundError
-
 
 _MEAN = np.array([123.675, 116.28, 103.53], dtype=np.float32)
 _STD = np.array([58.395, 57.12, 57.375], dtype=np.float32)
@@ -45,7 +45,7 @@ def _sigmoid(x: np.ndarray) -> np.ndarray:
 class MobileSAM:
     """Lazy-loaded, thread-safe singleton wrapper around the MobileSAM encoder + decoder."""
 
-    _instance: "MobileSAM | None" = None
+    _instance: MobileSAM | None = None
     _lock = Lock()
 
     def __init__(self, encoder_path: Path | str, decoder_path: Path | str) -> None:
@@ -60,7 +60,7 @@ class MobileSAM:
         )
 
     @classmethod
-    def get(cls, model_dir: Path | str | None = None) -> "MobileSAM":
+    def get(cls, model_dir: Path | str | None = None) -> MobileSAM:
         if cls._instance is not None:
             return cls._instance
         with cls._lock:
@@ -68,6 +68,7 @@ class MobileSAM:
                 return cls._instance
             if model_dir is None:
                 from app.config import get_settings
+
                 model_dir = get_settings().model_dir
             model_dir = Path(model_dir)
             enc = model_dir / "mobile_sam.encoder.onnx"
@@ -118,20 +119,26 @@ class MobileSAM:
         has_mask_input = np.array([0], dtype=np.float32)
 
         out_names = {o.name: o for o in self._decoder.get_outputs()}
-        result = dict(zip(out_names.keys(), self._decoder.run(
-            None,
-            {
-                "image_embeddings": embeddings,
-                "point_coords": point_coords,
-                "point_labels": point_labels,
-                "mask_input": mask_input,
-                "has_mask_input": has_mask_input,
-            },
-        )))
+        result = dict(
+            zip(
+                out_names.keys(),
+                self._decoder.run(
+                    None,
+                    {
+                        "image_embeddings": embeddings,
+                        "point_coords": point_coords,
+                        "point_labels": point_labels,
+                        "mask_input": mask_input,
+                        "has_mask_input": has_mask_input,
+                    },
+                ),
+                strict=True,
+            )
+        )
         # NanoSAM decoder outputs: low_res_masks (1, 4, 256, 256) logits
         # + iou_predictions (1, 4) scores
-        low_res = result["low_res_masks"]      # (1, 4, 256, 256) logits
-        iou = result["iou_predictions"][0]     # (4,)
+        low_res = result["low_res_masks"]  # (1, 4, 256, 256) logits
+        iou = result["iou_predictions"][0]  # (4,)
 
         # Select the best mask from the 3 ambiguity candidates (0..2).
         # Candidate 3 is the "everything" mask (near-100% area) — skip it.
@@ -143,17 +150,14 @@ class MobileSAM:
         # Solution: estimate each candidate's area from the low-res logits,
         # then pick the highest-IoU candidate whose area is < 50% of the image.
         # If all candidates exceed 50%, pick the smallest one.
-        _MAX_AREA = 0.50  # reject masks covering > 50% of image
+        _max_area = 0.50  # reject masks covering > 50% of image
         candidate_areas = []
         for i in range(3):
             small_mask = _sigmoid(low_res[0, i]) > _MASK_THRESHOLD
             candidate_areas.append(float(small_mask.mean()))
 
         # Filter to reasonable-area candidates with IoU > 0.5
-        reasonable = [
-            i for i in range(3)
-            if candidate_areas[i] < _MAX_AREA and iou[i] > 0.5
-        ]
+        reasonable = [i for i in range(3) if candidate_areas[i] < _max_area and iou[i] > 0.5]
         if reasonable:
             best_idx = max(reasonable, key=lambda i: iou[i])
         else:
@@ -166,9 +170,7 @@ class MobileSAM:
         # sigmoid + threshold. Resizing in logit space preserves the relative
         # magnitude across the mask (standard SAM practice).
         low_res_mask = low_res[0, best_idx]  # (256, 256) logits
-        resized_logits = cv2.resize(
-            low_res_mask, (w, h), interpolation=cv2.INTER_LINEAR
-        )
+        resized_logits = cv2.resize(low_res_mask, (w, h), interpolation=cv2.INTER_LINEAR)
         probs = _sigmoid(resized_logits)
         mask = (probs > _MASK_THRESHOLD).astype(np.uint8) * 255
         return mask, best_score

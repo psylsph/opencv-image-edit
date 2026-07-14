@@ -1,4 +1,5 @@
 """Tests for app.config settings module."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -22,9 +23,6 @@ def test_settings_defaults() -> None:
     assert s.max_image_dimension == 1536
     # Model paths
     assert s.model_dir == Path("./models").expanduser().resolve()
-    # Rate limiting
-    assert s.rate_limit_requests == 10
-    assert s.rate_limit_period == 60
     # Metrics
     assert s.enable_metrics is True
     assert s.metrics_port == 9090
@@ -32,7 +30,7 @@ def test_settings_defaults() -> None:
     assert s.blur_strength_max == 50
     assert s.grain_intensity_max == 1.0
     # App metadata
-    assert s.app_version == "1.2.0"
+    assert s.app_version == "1.3.0"
     assert s.app_name == "opencv-image-edit"
 
 
@@ -45,8 +43,6 @@ def test_settings_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MAX_IMAGE_SIZE_MB", "25")
     monkeypatch.setenv("MAX_IMAGE_DIMENSION", "2048")
     monkeypatch.setenv("MODEL_DIR", "/tmp/models")
-    monkeypatch.setenv("RATE_LIMIT_REQUESTS", "50")
-    monkeypatch.setenv("RATE_LIMIT_PERIOD", "30")
     monkeypatch.setenv("ENABLE_METRICS", "false")
     monkeypatch.setenv("METRICS_PORT", "9100")
     monkeypatch.setenv("BLUR_STRENGTH_MAX", "40")
@@ -61,8 +57,6 @@ def test_settings_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.max_image_size_mb == 25
     assert s.max_image_dimension == 2048
     assert s.model_dir == Path("/tmp/models")
-    assert s.rate_limit_requests == 50
-    assert s.rate_limit_period == 30
     assert s.enable_metrics is False
     assert s.metrics_port == 9100
     assert s.blur_strength_max == 40

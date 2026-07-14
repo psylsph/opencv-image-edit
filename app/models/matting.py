@@ -7,6 +7,7 @@ All models in this app use ONNX Runtime for consistency — it avoids the
 OpenCV 5 graph engine's incomplete operator support and gives us a single,
 optimized inference path.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -17,7 +18,6 @@ import numpy as np
 import onnxruntime as ort
 
 from app.exceptions import ModelNotFoundError
-
 
 _MODEL_SIZE = 320
 _MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
@@ -77,6 +77,7 @@ def get_matting_model(model_dir: Path | str | None = None) -> MattingModel:
             return _singleton
         if model_dir is None:
             from app.config import get_settings
+
             model_dir = get_settings().model_dir
         model_path = Path(model_dir) / "u2netp.onnx"
         _singleton = MattingModel(model_path)

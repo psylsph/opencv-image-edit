@@ -3,6 +3,7 @@
 All settings are read from environment variables (or .env file).
 Use `get_settings()` to access the cached singleton.
 """
+
 from __future__ import annotations
 
 from functools import lru_cache
@@ -35,10 +36,6 @@ class Settings(BaseSettings):
     # Model paths
     model_dir: Path = Path("./models")
 
-    # Rate limiting (per-IP, requests per period)
-    rate_limit_requests: int = Field(default=10, gt=0, le=1000)
-    rate_limit_period: int = Field(default=60, gt=0)
-
     # Metrics
     enable_metrics: bool = True
     metrics_port: int = 9090
@@ -48,7 +45,7 @@ class Settings(BaseSettings):
     grain_intensity_max: float = Field(default=1.0, gt=0.0, le=2.0)
 
     # App metadata
-    app_version: str = "1.2.0"
+    app_version: str = "1.3.0"
     app_name: str = "opencv-image-edit"
 
     @field_validator("log_level")

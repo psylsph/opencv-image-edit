@@ -3,6 +3,7 @@
 Darker pixels get more grain than brighter pixels, mimicking the look
 of film stock. Output dtype is uint8, clipped to [0, 255].
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -32,7 +33,9 @@ def apply_grain(
     # Fast-path: nothing to do.
     if intensity <= 0.0:
         copy = img.copy()
-        return copy, copy
+        # grain_only must be a 2-D debug plane; return zeros matching H, W.
+        grain_only = np.zeros(img.shape[:2], dtype=np.uint8)
+        return copy, grain_only
 
     # Save the caller's RNG state so a one-off seed doesn't leak globally.
     if seed is not None:
@@ -74,9 +77,7 @@ def apply_grain(
         grainy_color = np.clip(grainy_color, 0, 255).astype(np.uint8)
 
         if alpha is not None:
-            grainy = np.concatenate(
-                [grainy_color, alpha[:, :, np.newaxis]], axis=2
-            )
+            grainy = np.concatenate([grainy_color, alpha[:, :, np.newaxis]], axis=2)
         else:
             grainy = grainy_color
 

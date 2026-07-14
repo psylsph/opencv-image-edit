@@ -1,4 +1,5 @@
 """Tests for the SD model management endpoints."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -11,11 +12,19 @@ from fastapi.testclient import TestClient
 @pytest.fixture
 def client():
     from app.main import create_app
+
     return TestClient(create_app())
 
 
 def test_sd_status_when_available(client):
     """SD status reports available=True when model files exist."""
+    # SD 1.5 is an optional ~4GB download. Skip when it isn't present so the
+    # suite stays green in a fresh checkout / CI without the weights.
+    from app.config import get_settings
+
+    if not (get_settings().model_dir / "sd-inpainting" / "unet" / "model.onnx").exists():
+        pytest.skip("SD inpainting models not downloaded")
+
     # SD models are already downloaded in models/sd-inpainting/
     with patch("app.config.get_settings") as mock_settings:
         mock_settings.return_value.model_dir = Path("models")
@@ -28,9 +37,11 @@ def test_sd_status_when_available(client):
 
 def test_sd_status_when_not_available(client, tmp_path):
     """SD status reports available=False when model files don't exist."""
-    with patch("app.models.sd_inpaint.SDInpaint.is_available", return_value=False):
-        with patch("app.api.sd._sd_dir", return_value=tmp_path / "sd-inpainting"):
-            resp = client.get("/api/v1/sd/status")
+    with (
+        patch("app.models.sd_inpaint.SDInpaint.is_available", return_value=False),
+        patch("app.api.sd._sd_dir", return_value=tmp_path / "sd-inpainting"),
+    ):
+        resp = client.get("/api/v1/sd/status")
     assert resp.status_code == 200
     data = resp.json()
     assert data["available"] is False
@@ -51,6 +62,7 @@ def test_download_starts_and_returns_task_id(client):
     class FakeProc:
         def __init__(self, *a, **kw):
             self.returncode = None
+
         def poll(self):
             return None
 

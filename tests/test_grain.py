@@ -1,11 +1,11 @@
 """Tests for app.pipeline.grain — luminance-aware film grain (TDD)."""
+
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
 from app.pipeline.grain import apply_grain
-
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -28,8 +28,8 @@ def _bgra(w: int = 32, h: int = 32) -> np.ndarray:
 def _split_bw(w: int = 64, h: int = 64) -> np.ndarray:
     """Half black, half white. Useful for the dark-vs-bright grain test."""
     img = np.zeros((h, w, 3), dtype=np.uint8)
-    img[:, : w // 2, :] = 0       # black
-    img[:, w // 2 :, :] = 255     # white
+    img[:, : w // 2, :] = 0  # black
+    img[:, w // 2 :, :] = 255  # white
     return img
 
 
@@ -59,11 +59,16 @@ def split_bw() -> np.ndarray:
 
 
 def test_grain_intensity_zero_passthrough(gray):
-    """intensity=0 must return an unchanged image."""
+    """intensity=0 must return an unchanged image and a zero debug plane.
+
+    No grain is added at intensity=0, so the debug visualization is a 2-D
+    zero array (nothing to show). The shape matches the input's spatial dims.
+    """
     grainy, grain_only = apply_grain(gray, intensity=0.0)
     assert np.array_equal(grainy, gray)
-    # The grain debug should also equal the original (passthrough).
-    assert np.array_equal(grain_only, gray)
+    assert grain_only.shape == gray.shape[:2]
+    assert grain_only.dtype == np.uint8
+    assert np.all(grain_only == 0)
 
 
 def test_grain_intensity_zero_with_seed(gray):

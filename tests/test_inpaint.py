@@ -10,6 +10,7 @@ Covers:
 - dtype is uint8
 - composability with other pipeline steps (upscale)
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -17,7 +18,6 @@ import pytest
 
 from app.exceptions import ValidationError
 from app.pipeline.inpaint import inpaint
-
 
 # ---------------------------------------------------------------------------
 # Shape & dtype
@@ -116,7 +116,7 @@ def test_inpaint_modifies_masked_region():
     """
     # Distinct, repeating background pattern so inpainting has something to copy.
     img = np.zeros((100, 100, 3), dtype=np.uint8)
-    img[:, :, 0] = 50   # B
+    img[:, :, 0] = 50  # B
     img[:, :, 1] = 100  # G
     img[:, :, 2] = 150  # R
     # White square in the middle

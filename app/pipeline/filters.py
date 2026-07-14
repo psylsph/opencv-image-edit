@@ -22,11 +22,11 @@ Deviations from the original Pillow `ai-image-edit/app/filters.py`:
       preserved. Callers that need alpha preservation should composite
       themselves.
 """
+
 from __future__ import annotations
 
 import cv2
 import numpy as np
-
 
 # ---------------------------------------------------------------------------
 # Tone adjustments
@@ -90,8 +90,7 @@ def add_vignette(img: np.ndarray, strength: float = 0.5) -> np.ndarray:
     mask = np.clip(1.0 - r * strength, 0.0, 1.0).astype(np.float32)
     if img.ndim == 3:
         mask = mask[:, :, np.newaxis]
-    out = (img.astype(np.float32) * mask).astype(np.uint8)
-    return out
+    return (img.astype(np.float32) * mask).astype(np.uint8)
 
 
 # ---------------------------------------------------------------------------
@@ -102,15 +101,15 @@ def add_vignette(img: np.ndarray, strength: float = 0.5) -> np.ndarray:
 def add_auto_enhance(img: np.ndarray) -> np.ndarray:
     """Percentile stretch (1-99) on the L channel of LAB + light unsharp mask."""
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-    lo, hi = np.percentile(l, (1, 99))
+    l_ch, a_ch, b_ch = cv2.split(lab)
+    lo, hi = np.percentile(l_ch, (1, 99))
     if hi > lo:
-        l_stretched = np.clip(
-            (l.astype(np.float32) - lo) * 255.0 / (hi - lo), 0, 255
-        ).astype(np.uint8)
+        l_stretched = np.clip((l_ch.astype(np.float32) - lo) * 255.0 / (hi - lo), 0, 255).astype(
+            np.uint8
+        )
     else:
-        l_stretched = l
-    lab = cv2.merge([l_stretched, a, b])
+        l_stretched = l_ch
+    lab = cv2.merge([l_stretched, a_ch, b_ch])
     out = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
     return apply_unsharp_mask(out, sigma=1.0, strength=1.0)
 
@@ -131,8 +130,7 @@ def apply_color_adjustments(
     out = adjust_brightness(img, brightness)
     out = adjust_contrast(out, contrast)
     out = adjust_saturation(out, saturation)
-    out = adjust_sharpness(out, sharpness)
-    return out
+    return adjust_sharpness(out, sharpness)
 
 
 # ---------------------------------------------------------------------------
@@ -182,9 +180,7 @@ def apply_blur(img: np.ndarray, ksize: int = 5) -> np.ndarray:
     return cv2.GaussianBlur(img, (ksize, ksize), 0)
 
 
-def apply_unsharp_mask(
-    img: np.ndarray, sigma: float = 1.0, strength: float = 1.5
-) -> np.ndarray:
+def apply_unsharp_mask(img: np.ndarray, sigma: float = 1.0, strength: float = 1.5) -> np.ndarray:
     """Unsharp mask: img + strength * (img - gaussian_blur(img)).
 
     sigma controls blur radius; strength controls sharpening intensity.

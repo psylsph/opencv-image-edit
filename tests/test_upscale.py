@@ -6,6 +6,7 @@ Covers:
 - LANCZOS4 fallback when no model file is present
 - Grayscale input handling (round-trips through BGR)
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -20,7 +21,6 @@ from app.pipeline.upscale import (
     Upscaler,
     upscale,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -136,13 +136,22 @@ def test_upscaler_preserves_channels():
     assert out.shape == (120, 160, 3)
 
 
-def test_upscaler_strips_alpha():
-    """Input BGRA (H, W, 4) -> output BGR (H*scale, W*scale, 3) (alpha dropped)."""
+def test_upscaler_preserves_alpha():
+    """Input BGRA (H, W, 4) -> output BGRA (H*scale, W*scale, 4) with alpha upscaled.
+
+    Alpha preservation matters when background removal (which produces BGRA)
+    is followed by AI upscale — silently dropping alpha was a documented bug.
+    """
     img = _bgr(40, 40)
-    bgra = np.dstack([img, np.full((40, 40), 255, dtype=np.uint8)])  # (40, 40, 4)
+    alpha_src = np.full((40, 40), 200, dtype=np.uint8)
+    bgra = np.dstack([img, alpha_src])  # (40, 40, 4)
     out = upscale(bgra, scale=2, model_dir=Path("/tmp/nonexistent_models_dir_xyz"))
-    assert out.shape == (80, 80, 3)
+    assert out.shape == (80, 80, 4)
     assert out.dtype == np.uint8
+    # Alpha was upscaled with LANCZOS4 and stays close to the source value.
+    out_alpha = out[:, :, 3]
+    assert int(out_alpha.min()) >= 150
+    assert int(out_alpha.max()) <= 255
 
 
 def test_upscaler_handles_grayscale():

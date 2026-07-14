@@ -8,8 +8,10 @@ The CLIP tokenizer:
 - Adds BOS (<|startoftext|>) and EOS (<|endoftext|>) tokens
 - Pads to 77 tokens (SD's max context length)
 """
+
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 
@@ -28,18 +30,16 @@ class CLIPTokenizer:
         merges_path = tokenizer_dir / "merges.txt"
 
         if not vocab_path.exists() or not merges_path.exists():
-            raise FileNotFoundError(
-                f"CLIP tokenizer files not found in {tokenizer_dir}"
-            )
+            raise FileNotFoundError(f"CLIP tokenizer files not found in {tokenizer_dir}")
 
         # Build a CLIP-compatible BPE tokenizer
         self._tokenizer = None
         if config_path.exists():
-            try:
+            # tokenizer_config.json is HF format, not the tokenizers library
+            # format — from_file() will raise, which we ignore and fall back to
+            # building from vocab + merges below.
+            with contextlib.suppress(Exception):
                 self._tokenizer = Tokenizer.from_file(str(config_path))
-            except Exception:
-                # tokenizer_config.json is HF format, not tokenizers library format
-                pass
 
         # If tokenizer_config.json isn't a tokenizers-format file, build from vocab+merges
         if self._tokenizer is None:
@@ -65,9 +65,7 @@ class CLIPTokenizer:
         eos_token = "<|endoftext|>"
         pad_token = "<|endoftext|>"
 
-        self._tokenizer = Tokenizer(
-            BPE(vocab=vocab, merges=merges, unk_token="<|endoftext|>")
-        )
+        self._tokenizer = Tokenizer(BPE(vocab=vocab, merges=merges, unk_token="<|endoftext|>"))
         self._tokenizer.pre_tokenizer = ByteLevel(add_prefix_space=False, use_regex=False)
 
         self.bos_id = vocab.get(bos_token, 49406)
@@ -94,4 +92,4 @@ class CLIPTokenizer:
         while len(result) < self.max_length:
             result.append(self.pad_id)
 
-        return result[:self.max_length]
+        return result[: self.max_length]

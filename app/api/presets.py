@@ -1,4 +1,5 @@
-"""Presets endpoint — returns the 4 default presets and their settings."""
+"""Presets endpoint — returns the default presets and their settings."""
+
 from __future__ import annotations
 
 from fastapi import APIRouter
@@ -22,7 +23,9 @@ PRESETS: dict[str, dict] = {
             background=BackgroundRequest(enabled=True, mode="blur", blur_strength=20),
             grain=GrainRequest(enabled=True, intensity=0.2),
             upscale=UpscaleRequest(enabled=True, scale=2, algorithm="interp"),
-            filters=FiltersRequest(enabled=True, brightness=1.05, contrast=1.05, saturation=1.1, sharpness=1.1),
+            filters=FiltersRequest(
+                enabled=True, brightness=1.05, contrast=1.05, saturation=1.1, sharpness=1.1
+            ),
         ),
     },
     "landscape": {
@@ -31,7 +34,9 @@ PRESETS: dict[str, dict] = {
         "settings": ProcessRequest(
             grain=GrainRequest(enabled=False),
             upscale=UpscaleRequest(enabled=True, scale=2, algorithm="interp"),
-            filters=FiltersRequest(enabled=True, brightness=1.0, contrast=1.15, saturation=1.25, sharpness=1.2),
+            filters=FiltersRequest(
+                enabled=True, brightness=1.0, contrast=1.15, saturation=1.25, sharpness=1.2
+            ),
         ),
     },
     "vintage": {
@@ -49,6 +54,10 @@ PRESETS: dict[str, dict] = {
 @router.get("/presets")
 def presets() -> dict:
     return {
-        name: {"label": meta["label"], "description": meta["description"], "settings": meta["settings"].model_dump()}
+        name: {
+            "label": meta["label"],
+            "description": meta["description"],
+            "settings": meta["settings"].model_dump(),
+        }
         for name, meta in PRESETS.items()
     }

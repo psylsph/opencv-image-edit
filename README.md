@@ -178,9 +178,6 @@ That's the AI models warming up (U2NetP + EDSR). Subsequent requests are sub-sec
 **HEIC files from iPhone aren't loading**
 Make sure `pillow-heif` is installed — it is in `requirements.txt`. If you built a custom image without it, rebuild with `docker compose build --no-cache`.
 
-**`429 Too Many Requests` immediately**
-Default is 10 requests per 60 s per IP. Raise `RATE_LIMIT_REQUESTS` and `RATE_LIMIT_PERIOD` in your `.env`, then `docker compose up -d`.
-
 **`Image too large` on a 5 MB JPEG**
 After the on-disk size check, we also downscale anything whose long edge exceeds `MAX_IMAGE_DIMENSION` (default 1536 px). Lower the dimension in `.env` for very large images.
 

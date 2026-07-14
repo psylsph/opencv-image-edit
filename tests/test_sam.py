@@ -9,6 +9,7 @@ Covers:
   and avoids the background. Also asserts the overlay has red pixels in the
   masked area and the original BGR values outside it.
 """
+
 from __future__ import annotations
 
 import base64
@@ -19,7 +20,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import get_settings
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -44,6 +44,7 @@ def sam_synthetic_image() -> tuple[np.ndarray, tuple[int, int, int, int]]:
 @pytest.fixture
 def sam_synthetic_png_bytes(sam_synthetic_image) -> bytes:
     from app.pipeline.io import encode_png
+
     img, _ = sam_synthetic_image
     return encode_png(img)
 
@@ -55,9 +56,7 @@ def require_sam_models() -> None:
     enc = settings.model_dir / "mobile_sam.encoder.onnx"
     dec = settings.model_dir / "sam_vit_h_4b8939.decoder.onnx"
     if not enc.exists() or not dec.exists():
-        pytest.skip(
-            f"MobileSAM models missing: encoder={enc.exists()}, decoder={dec.exists()}"
-        )
+        pytest.skip(f"MobileSAM models missing: encoder={enc.exists()}, decoder={dec.exists()}")
 
 
 # ---------------------------------------------------------------------------
@@ -145,13 +144,16 @@ def test_segment_endpoint_with_fake_model_returns_503(
     """
     # Clear cached singleton so the next get() actually looks at the model dir
     from app.models import sam as sam_mod
+
     sam_mod.MobileSAM.clear_cache()
 
     import app.models.sam as sam_mod_top
+
     monkeypatch.setattr(sam_mod_top, "MobileSAM", sam_mod_top.MobileSAM)  # no-op safety
 
     # Force get_settings to return a model_dir with no models
     from app import config as config_module
+
     real_settings = config_module.get_settings.__wrapped__()
     real_settings.model_dir = tmp_path
 
@@ -196,6 +198,7 @@ def test_segment_with_point_real_model_isolates_foreground(
     img, (x0, y0, x1, y1) = sam_synthetic_image
     # Reset singleton so we pick up the (now present) model files
     from app.models import sam as sam_mod
+
     sam_mod.MobileSAM.clear_cache()
 
     # Click near the center of the rectangle
@@ -252,6 +255,7 @@ def test_segment_overlay_uses_red(
     values close to input outside the masked area."""
     img, (x0, y0, x1, y1) = sam_synthetic_image
     from app.models import sam as sam_mod
+
     sam_mod.MobileSAM.clear_cache()
 
     cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
@@ -292,9 +296,9 @@ def test_segment_overlay_uses_red(
     unmasked = ~binary
     # Avoid the boundary by eroding the mask
     if binary.any():
-        eroded = cv2.erode(
-            binary.astype(np.uint8), np.ones((7, 7), np.uint8), iterations=1
-        ).astype(bool)
+        eroded = cv2.erode(binary.astype(np.uint8), np.ones((7, 7), np.uint8), iterations=1).astype(
+            bool
+        )
         safe_unmasked = unmasked & ~eroded  # we want truly unmasked, non-boundary
     else:
         safe_unmasked = unmasked

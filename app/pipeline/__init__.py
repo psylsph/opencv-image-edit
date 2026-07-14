@@ -3,15 +3,16 @@
 Chains stages in fixed order: pre-process → background → grain → upscale → filters.
 Each stage can be individually enabled/disabled via the ProcessRequest.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 import cv2
 import numpy as np
 
 from app.api.schemas import ProcessRequest
+from app.config import get_settings
 from app.exceptions import ProcessingError
 from app.models.matting import get_matting_model
 from app.pipeline.background import (
@@ -40,9 +41,9 @@ class ProcessResult:
     final: np.ndarray  # BGR or BGRA final output
     before_after: np.ndarray  # BGR side-by-side
     diff: np.ndarray  # BGR diff overlay
-    mask: Optional[np.ndarray]  # 2D uint8 alpha debug (or None)
-    upscaled: Optional[np.ndarray]  # BGR upscaled intermediate (or None)
-    grain_only: Optional[np.ndarray]  # 2D uint8 grain visualization (or None)
+    mask: np.ndarray | None  # 2D uint8 alpha debug (or None)
+    upscaled: np.ndarray | None  # BGR upscaled intermediate (or None)
+    grain_only: np.ndarray | None  # 2D uint8 grain visualization (or None)
 
 
 def process_pipeline(
@@ -66,11 +67,11 @@ def process_pipeline(
             raise ProcessingError("empty image")
 
         # 1. Pre-process (downscale if oversized)
-        original = resize_if_needed(img_bgr)
+        original = resize_if_needed(img_bgr, get_settings().max_image_dimension)
         current = original.copy()
-        upscaled_out: Optional[np.ndarray] = None
-        mask_debug: Optional[np.ndarray] = None
-        grain_only: Optional[np.ndarray] = None
+        upscaled_out: np.ndarray | None = None
+        mask_debug: np.ndarray | None = None
+        grain_only: np.ndarray | None = None
 
         # 2. Background
         if request.background.enabled:
@@ -81,9 +82,7 @@ def process_pipeline(
                 mask = matting.predict(current)
             mask_debug = get_alpha_debug(mask)
             if request.background.mode == "blur":
-                current = apply_background_blur(
-                    current, mask, request.background.blur_strength
-                )
+                current = apply_background_blur(current, mask, request.background.blur_strength)
             else:  # remove
                 current = apply_background_remove(current, mask)
 
@@ -93,11 +92,7 @@ def process_pipeline(
 
         # 4. Upscale (run before filters for cleaner result)
         if request.upscale.enabled and request.upscale.scale > 1:
-            algorithm = (
-                None
-                if request.upscale.algorithm == "interp"
-                else request.upscale.algorithm
-            )
+            algorithm = None if request.upscale.algorithm == "interp" else request.upscale.algorithm
             if algorithm is None:
                 # Fast LANCZOS4 path — no model required
                 upscaled_out = cv2.resize(
@@ -135,10 +130,7 @@ def process_pipeline(
             if request.filters.grayscale_blend > 0:
                 bgr = apply_grayscale(bgr, request.filters.grayscale_blend)
 
-            if alpha is not None:
-                current = np.dstack([bgr, alpha])
-            else:
-                current = bgr
+            current = np.dstack([bgr, alpha]) if alpha is not None else bgr
 
         # 6. Comparisons (always)
         # For before/after, use the preprocessed original (no alpha) for left side

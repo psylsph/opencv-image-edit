@@ -7,18 +7,18 @@ Covers:
 - _resize_mask: shape coercion utility
 - MattingModel: existence/API smoke (full inference is not unit-tested here)
 """
+
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
+from app.models.matting import MattingModel
 from app.pipeline.background import (
     apply_background_blur,
     apply_background_remove,
     get_alpha_debug,
 )
-from app.models.matting import MattingModel
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -115,10 +115,10 @@ def test_apply_background_remove_mask_determines_alpha():
     # 1-px Gaussian feathering only affects the boundary. Compare INTERIOR
     # pixels (well clear of the boundary) for a tight tolerance.
     interior_fg = alpha[30:50, 40:60]  # deep inside the FG rectangle
-    interior_bg = alpha[2:18, 2:28]    # deep inside the BG area
+    interior_bg = alpha[2:18, 2:28]  # deep inside the BG area
     assert interior_fg.max() <= 1.0 + 1e-6
-    assert interior_fg.min() > 0.95    # quantised to ~255/255
-    assert interior_bg.max() < 0.05    # quantised to ~0/255
+    assert interior_fg.min() > 0.95  # quantised to ~255/255
+    assert interior_bg.max() < 0.05  # quantised to ~0/255
     # Boundary (last few pixels) is allowed to be mid-range
     # — that's the feathered edge this function explicitly produces.
 
@@ -217,8 +217,9 @@ def test_matting_model_predicts_real_foreground():
     a near-uniform ~0.5 mask that destroys blur/remove compositing.
     Skipped if model file is missing.
     """
-    import cv2
     from pathlib import Path
+
+    import cv2
 
     model_path = Path(__file__).parent.parent / "models" / "u2netp.onnx"
     if not model_path.exists():
@@ -249,4 +250,5 @@ def test_matting_model_predicts_real_foreground():
 def cv2_blur(img: np.ndarray, sigma: int) -> np.ndarray:
     """Local helper to compute the same Gaussian the pipeline uses."""
     import cv2
+
     return cv2.GaussianBlur(img, (0, 0), sigmaX=sigma)
