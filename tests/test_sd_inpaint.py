@@ -4,13 +4,13 @@ The full inference path is slow (~90s for 10 steps on CPU), so these tests
 are skipped if the SD model files are not present. They exercise the
 tokenizer (fast) and one full inference (slow but proves the model works).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 
 import numpy as np
 import pytest
-
 
 _SD_DIR = Path("models/sd-inpainting")
 _HAS_SD = (
@@ -66,7 +66,8 @@ def test_sd_inpaint_returns_valid_image():
 
     sd = SDInpaint("models")
     result = sd.inpaint(
-        img, mask,
+        img,
+        mask,
         prompt="a blue sky with white clouds",
         negative_prompt="blurry, low quality, distorted",
         num_steps=5,  # 5 steps for test speed

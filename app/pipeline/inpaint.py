@@ -11,6 +11,7 @@ Four algorithms are available:
 All four take a uint8 mask where non-zero pixels are the areas to be removed.
 The default algorithm is "lama" (fast, good quality, ~4s on CPU).
 """
+
 from __future__ import annotations
 
 import cv2
@@ -18,7 +19,6 @@ import numpy as np
 
 from app.exceptions import ValidationError
 from app.models.lama import LaMa
-
 
 SUPPORTED_ALGORITHMS = {
     "telea": cv2.INPAINT_TELEA,
@@ -55,9 +55,7 @@ def inpaint(
     """
     valid_algos = list(SUPPORTED_ALGORITHMS) + ["lama", "sd"]
     if algorithm not in SUPPORTED_ALGORITHMS and algorithm not in ("lama", "sd"):
-        raise ValidationError(
-            f"unsupported algorithm: {algorithm!r}; choose from {valid_algos}"
-        )
+        raise ValidationError(f"unsupported algorithm: {algorithm!r}; choose from {valid_algos}")
     if mask.dtype != np.uint8:
         raise ValidationError(f"mask must be uint8, got {mask.dtype}")
     if img.shape[:2] != mask.shape[:2]:
@@ -82,13 +80,12 @@ def inpaint(
         out = lama.infer(bgr, mask, iterations=iterations)
     elif algorithm == "sd":
         from app.models.sd_inpaint import SDInpaint
+
         sd = SDInpaint.get()
         out = sd.inpaint(bgr, mask, prompt=prompt or "")
     else:
         if radius < MIN_RADIUS or radius > MAX_RADIUS:
-            raise ValidationError(
-                f"radius must be in [{MIN_RADIUS}, {MAX_RADIUS}], got {radius}"
-            )
+            raise ValidationError(f"radius must be in [{MIN_RADIUS}, {MAX_RADIUS}], got {radius}")
         out = cv2.inpaint(bgr, mask, float(radius), SUPPORTED_ALGORITHMS[algorithm])
 
     if img.ndim == 2:

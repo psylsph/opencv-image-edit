@@ -28,6 +28,7 @@ invisible to the model), we:
 This gives small masks ~5-10× more pixels in the model's 512×512 input,
 dramatically improving removal quality.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -39,23 +40,22 @@ import onnxruntime as ort
 
 from app.exceptions import ModelNotFoundError
 
-
 _MODEL_FILENAME = "inpainting_lama_2025jan.onnx"
 _INPUT_SIZE = 512  # model expects 512x512 inputs
 
 # Crop-based inference defaults
 _DEFAULT_DILATE_PX = 10
-_DEFAULT_MIN_PAD = 64       # minimum padding around mask bbox (px)
+_DEFAULT_MIN_PAD = 64  # minimum padding around mask bbox (px)
 _DEFAULT_ITERATIONS = 1
-_FEATHER_KERNEL = 7         # Gaussian blur kernel for mask boundary feathering
-_MAX_MASK_RATIO = 0.35      # mask must cover <35% of crop for good context
-_DARKNESS_THRESHOLD = 15    # mean pixel value below this = "black square" failure
+_FEATHER_KERNEL = 7  # Gaussian blur kernel for mask boundary feathering
+_MAX_MASK_RATIO = 0.35  # mask must cover <35% of crop for good context
+_DARKNESS_THRESHOLD = 15  # mean pixel value below this = "black square" failure
 
 
 class LaMa:
     """Lazy-loaded, thread-safe singleton wrapper around the LaMa ONNX model."""
 
-    _instance: "LaMa | None" = None
+    _instance: LaMa | None = None
     _lock = Lock()
 
     def __init__(self, model_path: Path | str) -> None:
@@ -67,7 +67,7 @@ class LaMa:
         )
 
     @classmethod
-    def get(cls, model_dir: Path | str | None = None) -> "LaMa":
+    def get(cls, model_dir: Path | str | None = None) -> LaMa:
         """Get or construct the LaMa singleton for the given model directory."""
         if cls._instance is not None:
             return cls._instance
@@ -76,6 +76,7 @@ class LaMa:
                 return cls._instance
             if model_dir is None:
                 from app.config import get_settings
+
                 model_dir = get_settings().model_dir
             model_dir = Path(model_dir)
             model_path = model_dir / _MODEL_FILENAME
@@ -109,16 +110,24 @@ class LaMa:
     def _preprocess(img_bgr: np.ndarray) -> np.ndarray:
         """BGR uint8 [0,255] -> 4D float32 blob in NCHW, scaled by 1/255."""
         return cv2.dnn.blobFromImage(
-            img_bgr, scalefactor=1.0 / 255.0, size=(_INPUT_SIZE, _INPUT_SIZE),
-            mean=(0, 0, 0), swapRB=False, crop=False,
+            img_bgr,
+            scalefactor=1.0 / 255.0,
+            size=(_INPUT_SIZE, _INPUT_SIZE),
+            mean=(0, 0, 0),
+            swapRB=False,
+            crop=False,
         )
 
     @staticmethod
     def _preprocess_mask(mask: np.ndarray) -> np.ndarray:
         """uint8 single-channel mask -> 4D float32 binarized blob."""
         blob = cv2.dnn.blobFromImage(
-            mask, scalefactor=1.0, size=(_INPUT_SIZE, _INPUT_SIZE),
-            mean=(0,), swapRB=False, crop=False,
+            mask,
+            scalefactor=1.0,
+            size=(_INPUT_SIZE, _INPUT_SIZE),
+            mean=(0,),
+            swapRB=False,
+            crop=False,
         )
         return (blob > 0).astype(np.float32)
 
@@ -270,7 +279,9 @@ class LaMa:
         # 5. Resize result back to crop dimensions BEFORE quality check
         if result_u8.shape[0] != crop_h or result_u8.shape[1] != crop_w:
             result_u8 = cv2.resize(
-                result_u8, (crop_w, crop_h), interpolation=cv2.INTER_LINEAR,
+                result_u8,
+                (crop_w, crop_h),
+                interpolation=cv2.INTER_LINEAR,
             )
 
         # 6. Quality check: detect "black square" failure.
@@ -291,13 +302,19 @@ class LaMa:
 
             if is_uniform_black or is_absurdly_dark:
                 import logging
+
                 logging.getLogger(__name__).warning(
                     "LaMa quality fallback triggered: masked_mean=%.1f std=%.1f "
                     "context_mean=%.1f — falling back to TELEA",
-                    masked_mean, masked_std, context_mean,
+                    masked_mean,
+                    masked_std,
+                    context_mean,
                 )
                 result_u8 = cv2.inpaint(
-                    crop_img, crop_mask, 5.0, cv2.INPAINT_TELEA,
+                    crop_img,
+                    crop_mask,
+                    5.0,
+                    cv2.INPAINT_TELEA,
                 )
 
         # 7. Blend back: feathered transition at mask boundary.

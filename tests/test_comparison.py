@@ -1,4 +1,5 @@
 """Tests for app.pipeline.comparison — before/after side-by-side and diff overlay (TDD)."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -10,7 +11,6 @@ from app.pipeline.comparison import (
     diff_overlay,
     side_by_side,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -63,7 +63,7 @@ def test_side_by_side_default_divider_color():
     after = _solid_bgr(50, 40, (0, 0, 0))
     out = side_by_side(before, after)
     # Divider strip starts at column 50 and is 3 wide
-    divider = out[:, 50:50 + DEFAULT_DIVIDER_WIDTH, :]
+    divider = out[:, 50 : 50 + DEFAULT_DIVIDER_WIDTH, :]
     # Every pixel in the divider must be green
     expected = np.array(DEFAULT_DIVIDER_COLOR, dtype=np.uint8)
     assert np.all(divider == expected), f"divider not green: {divider[0, 0]}"
@@ -73,7 +73,7 @@ def test_side_by_side_custom_divider_color():
     before = _solid_bgr(50, 40, (0, 0, 0))
     after = _solid_bgr(50, 40, (0, 0, 0))
     out = side_by_side(before, after, divider_color=(255, 0, 0))
-    divider = out[:, 50:50 + DEFAULT_DIVIDER_WIDTH, :]
+    divider = out[:, 50 : 50 + DEFAULT_DIVIDER_WIDTH, :]
     assert np.all(divider[:, :, 0] == 255)  # B
     assert np.all(divider[:, :, 1] == 0)
     assert np.all(divider[:, :, 2] == 0)
@@ -94,7 +94,7 @@ def test_side_by_side_handles_bgra():
     assert out.ndim == 3
     assert out.shape[2] == 4
     # And the alpha of the divider region must be fully opaque
-    divider = out[:, 40:40 + DEFAULT_DIVIDER_WIDTH, :]
+    divider = out[:, 40 : 40 + DEFAULT_DIVIDER_WIDTH, :]
     assert np.all(divider[:, :, 3] == 255)
 
 
@@ -117,7 +117,7 @@ def test_side_by_side_right_region_matches_after():
     before = _solid_bgr(40, 30, (10, 20, 30))
     after = _solid_bgr(50, 30, (40, 50, 60))
     out = side_by_side(before, after)
-    assert np.array_equal(out[:, 40 + DEFAULT_DIVIDER_WIDTH:, :], after)
+    assert np.array_equal(out[:, 40 + DEFAULT_DIVIDER_WIDTH :, :], after)
 
 
 # ---------------------------------------------------------------------------

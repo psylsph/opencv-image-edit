@@ -1,9 +1,10 @@
 """Pydantic schemas for the process API."""
+
 from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 
 class BackgroundRequest(BaseModel):

@@ -3,11 +3,11 @@
 Pure OpenCV implementation — no Pillow dependency. Useful for QA of image
 edits (side-by-side) and for highlighting what changed (diff overlay).
 """
+
 from __future__ import annotations
 
 import cv2
 import numpy as np
-
 
 DEFAULT_DIVIDER_COLOR: tuple[int, int, int] = (0, 255, 0)  # green, BGR
 DEFAULT_DIVIDER_WIDTH: int = 3
@@ -28,9 +28,7 @@ def _normalize_channels(
         after = cv2.cvtColor(after, cv2.COLOR_GRAY2BGR)
 
     if before.ndim != after.ndim:
-        raise ValueError(
-            f"ndim mismatch: before={before.ndim}, after={after.ndim}"
-        )
+        raise ValueError(f"ndim mismatch: before={before.ndim}, after={after.ndim}")
     if before.ndim != 3:
         raise ValueError(f"expected 2D or 3D images, got ndim={before.ndim}")
 
@@ -66,9 +64,7 @@ def side_by_side(
         dtype ``uint8``.
     """
     if before.shape[0] != after.shape[0]:
-        raise ValueError(
-            f"height mismatch: before={before.shape[0]}, after={after.shape[0]}"
-        )
+        raise ValueError(f"height mismatch: before={before.shape[0]}, after={after.shape[0]}")
     if divider_width < 1:
         raise ValueError(f"divider_width must be >= 1, got {divider_width}")
 
@@ -96,9 +92,7 @@ def side_by_side(
         font = cv2.FONT_HERSHEY_SIMPLEX
         scale = max(0.5, h / 600.0)
         thickness = max(1, int(scale * 2))
-        cv2.putText(
-            canvas, "BEFORE", (10, 30), font, scale, (0, 255, 0), thickness
-        )
+        cv2.putText(canvas, "BEFORE", (10, 30), font, scale, (0, 255, 0), thickness)
         cv2.putText(
             canvas,
             "AFTER",
@@ -129,9 +123,7 @@ def diff_overlay(
         Image of the same shape and dtype (``uint8``).
     """
     if before.shape != after.shape:
-        raise ValueError(
-            f"shape mismatch: before={before.shape}, after={after.shape}"
-        )
+        raise ValueError(f"shape mismatch: before={before.shape}, after={after.shape}")
 
     diff = cv2.absdiff(before, after).astype(np.float32) * gain
     return np.clip(diff, 0, 255).astype(np.uint8)

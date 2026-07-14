@@ -12,17 +12,17 @@ The fixtures are intentionally lightweight — they avoid loading the heavy
 ONNX matting model at import time. Tests that need the matting model should
 request it explicitly via ``require_matting_model``.
 """
+
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
 from app.config import get_settings
-
 
 # ---------------------------------------------------------------------------
 # Core fixtures
@@ -53,7 +53,7 @@ def sample_image() -> np.ndarray:
     clear foreground/background split.
     """
     img = np.zeros((100, 100, 3), dtype=np.uint8)
-    img[:50, :, :] = (40, 60, 80)   # darker top half (BGR)
+    img[:50, :, :] = (40, 60, 80)  # darker top half (BGR)
     img[50:, :, :] = (200, 180, 160)  # lighter bottom half
     # Draw a small "foreground" object for the matting model
     img[30:70, 30:70, :] = (10, 200, 30)
