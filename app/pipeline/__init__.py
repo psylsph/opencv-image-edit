@@ -78,7 +78,7 @@ def process_pipeline(
             if background_mask is not None:
                 mask = background_paint_mask_to_foreground_alpha(background_mask, current.shape)
             else:
-                matting = get_matting_model()
+                matting = get_matting_model(request.background.model_name)
                 mask = matting.predict(current)
             mask_debug = get_alpha_debug(mask)
             if request.background.mode == "blur":

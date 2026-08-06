@@ -65,6 +65,13 @@
             <label><input type="radio" name="bg-source" value="auto" checked /><span>Auto</span></label>
             <label><input type="radio" name="bg-source" value="paint" /><span>Paint BG</span></label>
           </fieldset>
+          <div id="bg-model-row" class="select-row">
+            <label for="bg-model">Model</label>
+            <select id="bg-model" disabled>
+              <option value="birefnet_tiny" selected>BiRefNet Tiny (best quality)</option>
+              <option value="u2netp">U2NetP (fast)</option>
+            </select>
+          </div>
           <p class="control-hint" id="bg-mask-hint" hidden>Drag over areas that should be treated as background.</p>
           <div id="bg-mask-controls" hidden>
             <label class="slider-row">

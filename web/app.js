@@ -45,7 +45,7 @@ const state = {
 
 // --- Defaults (used by Reset and on first load) ---
 const DEFAULT_SETTINGS = {
-  background: { enabled: false, mode: "blur", blur_strength: 15, model_name: "u2netp" },
+  background: { enabled: false, mode: "blur", blur_strength: 15, model_name: "birefnet_tiny" },
   grain: { enabled: false, intensity: 0.4 },
   upscale: { enabled: false, scale: 2, algorithm: "interp" },
   filters: {
@@ -62,7 +62,36 @@ async function init() {
   bindEvents();
   applyPreset(null); // start at defaults
   setMaskMode("click"); // initialize mask mode UI
+  loadModels();
   registerServiceWorker();
+}
+
+async function loadModels() {
+  try {
+    const resp = await fetch("/api/v1/models");
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const select = $("#bg-model");
+    if (!select) return;
+    select.innerHTML = "";
+    for (const m of data.models) {
+      const opt = document.createElement("option");
+      opt.value = m.key;
+      opt.textContent = m.display_name;
+      if (!m.available) {
+        opt.textContent += " (not downloaded)";
+        opt.disabled = true;
+      }
+      select.appendChild(opt);
+    }
+    select.value = "birefnet_tiny";
+    select.disabled = false;
+  } catch (err) {
+    console.error("Failed to load models:", err);
+    // Keep the default u2netp option
+    const select = $("#bg-model");
+    if (select) select.disabled = false;
+  }
 }
 
 async function loadPresets() {
@@ -443,9 +472,13 @@ function updateMaskCanvasVisibility() {
 function updateBackgroundMaskControls() {
   const paint = isBackgroundPaintActive();
   const enabled = $("#bg-enabled")?.checked;
+  const source = document.querySelector("input[name='bg-source']:checked")?.value || "auto";
   $("#bg-mask-controls").hidden = !paint;
   $("#bg-mask-hint").hidden = !paint;
   setGroupDisabled("#bg-source", !enabled);
+  // Show model dropdown only in auto mode (not paint)
+  const modelRow = $("#bg-model-row");
+  if (modelRow) modelRow.style.display = source === "auto" ? "flex" : "none";
   updateMaskCanvasVisibility();
 }
 
@@ -529,7 +562,7 @@ function collectSettings() {
       enabled: $("#bg-enabled").checked,
       mode: checkedRadio("bg-mode") || "blur",
       blur_strength: parseInt($("#blur-strength").value, 10),
-      model_name: "u2netp",
+      model_name: $("#bg-model")?.value || "u2netp",
     },
     grain: {
       enabled: $("#grain-enabled").checked,
@@ -580,6 +613,8 @@ function applyPreset(name) {
   setSlider($("#blur-strength"), s.background.blur_strength, $("#blur-value"));
   const bgSource = document.querySelector("input[name='bg-source'][value='auto']");
   if (bgSource) bgSource.checked = true;
+  const bgModel = $("#bg-model");
+  if (bgModel && s.background.model_name) bgModel.value = s.background.model_name;
   updateBlurStrengthVisibility();
   updateBackgroundMaskControls();
   // Re-fire change handlers to update visual disabled states

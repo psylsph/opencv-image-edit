@@ -11,7 +11,7 @@ class BackgroundRequest(BaseModel):
     enabled: bool = False
     mode: Literal["blur", "remove"] = "blur"
     blur_strength: int = Field(default=15, ge=1, le=50)
-    model_name: str = "u2netp"
+    model_name: str = "birefnet_tiny"
 
 
 class GrainRequest(BaseModel):

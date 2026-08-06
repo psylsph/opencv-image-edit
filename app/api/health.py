@@ -15,9 +15,9 @@ router = APIRouter()
 def health() -> dict:
     settings = get_settings()
     models_status = {}
-    # Check matting model
+    # Check default matting model
     try:
-        get_matting_model(settings.model_dir)
+        get_matting_model(model_dir=settings.model_dir)
         models_status["matting"] = "loaded"
     except Exception as exc:
         models_status["matting"] = f"missing: {exc.__class__.__name__}"

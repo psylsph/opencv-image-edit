@@ -32,6 +32,26 @@ MODELS: dict[str, dict] = {
         "sha256": "309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8",
         "size_mb": 4.7,
     },
+    "silueta.onnx": {
+        "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/silueta.onnx",
+        "sha256": "75da6c8d2f8096ec743d071951be73b4a8bc7b3e51d9a6625d63644f90ffeedb",
+        "size_mb": 44.0,
+    },
+    "u2net.onnx": {
+        "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx",
+        "sha256": "8d10d2f3bb75ae3b6d527c77944fc5e7dcd94b29809d47a739a7a728a912b491",
+        "size_mb": 176.0,
+    },
+    "isnet_general_use.onnx": {
+        "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/isnet-general-use.onnx",
+        "sha256": "60920e99c45464f2ba57bee2ad08c919a52bbf852739e96947fbb4358c0d964a",
+        "size_mb": 174.0,
+    },
+    "BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx": {
+        "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx",
+        "sha256": "5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333",
+        "size_mb": 213.0,
+    },
     "EDSR_x2.pb": {
         "url": "https://github.com/Saafke/EDSR_Tensorflow/raw/master/models/EDSR_x2.pb",
         "sha256": "585623221baa070279a0d1e7e113a4c3faba0f318ca7fdd9a65d9afc0763d9b4",

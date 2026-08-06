@@ -338,7 +338,7 @@ def test_pipeline_background_request_default_factory():
     bg = BackgroundRequest()
     assert bg.mode == "blur"
     assert bg.blur_strength == 15
-    assert bg.model_name == "u2netp"
+    assert bg.model_name == "birefnet_tiny"
 
 
 def test_pipeline_upscale_request_default_factory():
@@ -410,7 +410,7 @@ def test_pipeline_missing_matting_model_propagates_error():
     """
     from app.models import matting
 
-    saved_singleton = matting._singleton
+    saved_cache = matting._cache
     orig_getter = matting.get_matting_model
     try:
 
@@ -437,4 +437,4 @@ def test_pipeline_missing_matting_model_propagates_error():
             matting.get_matting_model = orig_getter  # type: ignore[assignment]
             importlib.reload(orch)
     finally:
-        matting._singleton = saved_singleton
+        matting._cache = saved_cache
