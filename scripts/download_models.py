@@ -351,13 +351,29 @@ _SD_FILES = {
 }
 
 
+def _sd_files_complete(sd_dir: Path) -> bool:
+    """True only if every SD file exists and is (near-)complete."""
+    for subdir_path, (_repo_path, size_mb) in _SD_FILES.items():
+        dest = sd_dir / subdir_path
+        if not dest.exists():
+            return False
+        expected_bytes = size_mb * 1024 * 1024
+        have = dest.stat().st_size
+        big = expected_bytes > 5 * 1024 * 1024
+        complete = (have >= 0.9 * expected_bytes) if big else (have > 100)
+        if not complete:
+            return False
+    return True
+
+
 def download_sd_models(target_dir: Path) -> None:
     """Download SD 1.5 ONNX models (~4GB). Optional — LaMa is the default."""
     sd_dir = target_dir / "sd-inpainting"
 
-    # Check if already downloaded
-    unet_data = sd_dir / "unet" / "model.onnx_data"
-    if unet_data.exists() and unet_data.stat().st_size > 1_000_000_000:
+    # Check if already downloaded: every file must be present and complete.
+    # (The old check only tested unet/model.onnx_data > 1GB, which a partial
+    # interrupted download also passes — leaving vae/tokenizer missing forever.)
+    if _sd_files_complete(sd_dir):
         print("  SD models already present.")
         return
 
