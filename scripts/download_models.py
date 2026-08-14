@@ -390,20 +390,28 @@ def download_sd_models(target_dir: Path) -> None:
         expected_bytes = size_mb * 1024 * 1024
         if dest.exists():
             have = dest.stat().st_size
-            # Large files (>5 MB) are only trusted once they're >=90% of the
-            # expected size — a partial 3 GB ``model.onnx_data`` used to be
-            # silently skipped as "already present". Small files (tokenizer
+            # A file is trusted only within [90%, 110%] of the expected size.
+            # A partial 3 GB ``model.onnx_data`` used to be silently skipped as
+            # "already present"; an OVERSIZED file (two concurrent downloads
+            # appending to the same path) is equally corrupt — interleaved
+            # garbage that ORT reads at fixed offsets. Small files (tokenizer
             # config, the small UNet graph) just need to be non-trivially
             # present; their ``size_mb`` entries are approximate.
             big = expected_bytes > 5 * 1024 * 1024
-            complete = (have >= 0.9 * expected_bytes) if big else (have > 100)
+            complete = (0.9 * expected_bytes <= have <= 1.1 * expected_bytes) if big else (have > 100)
             if complete:
                 print(f"  [{subdir_path}] already present ({have / 1024 / 1024:.0f} MB)")
                 continue
-            print(
-                f"  [{subdir_path}] partial ({have / 1024 / 1024:.1f} MB of "
-                f"~{size_mb} MB) — re-downloading from scratch"
-            )
+            if have > 1.1 * expected_bytes:
+                print(
+                    f"  [{subdir_path}] OVERSIZED ({have / 1024 / 1024:.0f} MB > "
+                    f"~{size_mb} MB) — corrupt (likely concurrent writes), re-downloading"
+                )
+            else:
+                print(
+                    f"  [{subdir_path}] partial ({have / 1024 / 1024:.1f} MB of "
+                    f"~{size_mb} MB) — re-downloading from scratch"
+                )
             dest.unlink()
 
         print(f"  [{subdir_path}] downloading (~{size_mb} MB)...")
