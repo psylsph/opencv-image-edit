@@ -17,7 +17,7 @@ services:
     # 8g needed for SD 1.5 inpainting (fp32 UNet is 5.4GB on disk; ORT
     # arena peaks ~6-7GB on first inference pass).
     mem_limit: 8g
-    cpus: 2.0
+    cpus: 3.0
     pids_limit: 256
     ports:
       - "8000:8000"   # FastAPI + static PWA
