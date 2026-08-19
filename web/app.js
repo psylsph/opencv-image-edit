@@ -52,6 +52,7 @@ const DEFAULT_SETTINGS = {
     enabled: false,
     brightness: 1, contrast: 1, saturation: 1, sharpness: 1,
     vignette_strength: 0, sepia: false, grayscale_blend: 0,
+    cartoon: false, cartoon_color_levels: 8, cartoon_edge_strength: 0.6, cartoon_smooth_passes: 2,
   },
 };
 
@@ -174,6 +175,12 @@ function bindEvents() {
   // that also blocks the checkbox itself, so manual enabling becomes impossible.
   $("#filters-enabled").addEventListener("change", updateFilterControls);
 
+  // Cartoon toggle: show/hide cartoon parameter sliders
+  $("#cartoon").addEventListener("change", (e) => {
+    const controls = $("#cartoon-controls");
+    if (controls) controls.hidden = !e.target.checked;
+  });
+
   // Auto-expand a section's <details> when its toggle is switched on
   [
     ["#bg-enabled", "#bg-group"],
@@ -231,13 +238,10 @@ function bindEvents() {
     if (!checked) return;
     const val = checked.value;
     const row = $("#inpaint-radius-row");
-    const promptRow = $("#inpaint-prompt-row");
     const iterationsRow = $("#inpaint-iterations-row");
-    // LaMa and SD don't use radius; only NS/TELEA do
+    // LaMa doesn't use radius; only NS/TELEA do
     if (row) row.style.display = (val === "ns" || val === "telea") ? "flex" : "none";
-    // Prompt field shows for SD only
-    if (promptRow) promptRow.style.display = val === "sd" ? "flex" : "none";
-    // Iteration passes improve LaMa only; SD has fixed DDIM steps, NS/TELEA use radius
+    // Iteration passes improve LaMa only; NS/TELEA use radius
     if (iterationsRow) iterationsRow.style.display = val === "lama" ? "flex" : "none";
   }
   $$("input[name='inpaint-algo']").forEach((r) => {
@@ -245,115 +249,6 @@ function bindEvents() {
   });
   updateInpaintRadiusVisibility();
 
-  // --- Generative model status (SD only) ---
-  let sdAvailable = false;
-  let sdPollTimer = null;
-
-  async function checkSdStatus() {
-    try {
-      const resp = await fetch("/api/v1/sd/status");
-      const data = await resp.json();
-      sdAvailable = data.available;
-      updateGenWarning();
-    } catch {
-      // endpoint not available — assume SD not set up
-    }
-  }
-
-  function updateGenWarning() {
-    const checked = document.querySelector("input[name='inpaint-algo']:checked");
-    if (!checked) return;
-    const warning = $("#gen-warning");
-    const warningText = $("#gen-warning-text");
-    const dlBtn = $("#sd-download-btn");
-    if (!warning) return;
-
-    if (checked.value === "sd" && !sdAvailable) {
-      warning.hidden = false;
-      if (warningText) warningText.textContent = "🎨 SD models not downloaded (~4GB).";
-      if (dlBtn) dlBtn.style.display = "";
-    } else {
-      warning.hidden = true;
-    }
-  }
-
-  // Re-check warning visibility when algorithm changes
-  $$("#inpaint-algo input[type='radio']").forEach((r) => {
-    r.addEventListener("change", updateGenWarning);
-  });
-
-  // Download button handler
-  $("#sd-download-btn")?.addEventListener("click", async () => {
-    const btn = $("#sd-download-btn");
-    const progress = $("#sd-progress");
-    const progressText = $("#sd-progress-text");
-    const logEl = $("#sd-log");
-    btn.disabled = true;
-    btn.textContent = "Starting…";
-    progress.hidden = false;
-
-    try {
-      const resp = await fetch("/api/v1/sd/download", { method: "POST" });
-      const data = await resp.json();
-
-      if (!data.started && data.task_id) {
-        // Already running
-        pollSdDownload(data.task_id);
-        return;
-      }
-      if (!data.started) {
-        progressText.textContent = "Error: " + (data.message || "could not start");
-        btn.disabled = false;
-        btn.textContent = "Download";
-        return;
-      }
-      pollSdDownload(data.task_id);
-    } catch (err) {
-      progressText.textContent = "Error: " + err.message;
-      btn.disabled = false;
-      btn.textContent = "Download";
-    }
-  });
-
-  function pollSdDownload(taskId) {
-    const btn = $("#sd-download-btn");
-    const progressText = $("#sd-progress-text");
-    const logEl = $("#sd-log");
-    if (sdPollTimer) clearInterval(sdPollTimer);
-
-    sdPollTimer = setInterval(async () => {
-      try {
-        const resp = await fetch(`/api/v1/sd/download/${taskId}/status`);
-        const data = await resp.json();
-
-        if (data.status === "running") {
-          progressText.textContent = `Downloading… (${data.elapsed_seconds}s)`;
-          logEl.textContent = data.log_tail || "";
-          logEl.scrollTop = logEl.scrollHeight;
-        } else if (data.status === "completed") {
-          clearInterval(sdPollTimer);
-          sdPollTimer = null;
-          progressText.textContent = "✅ Download complete!";
-          sdAvailable = true;
-          if (btn) { btn.disabled = false; btn.textContent = "Download"; }
-          if (progress) progress.hidden = true;
-          updateGenWarning();
-        } else {
-          clearInterval(sdPollTimer);
-          sdPollTimer = null;
-          progressText.textContent = `❌ Download failed (exit ${data.returncode})`;
-          logEl.textContent = data.log_tail || "";
-          btn.disabled = false;
-          btn.textContent = "Retry";
-        }
-      } catch {
-        // network blip — keep polling
-      }
-    }, 5000);
-  }
-
-  // Check SD status on page load
-  checkSdStatus();
   // Undo + Clear (paint mode)
   $("#inpaint-undo").addEventListener("click", undoMaskStroke);
   $("#inpaint-clear").addEventListener("click", clearMask);
@@ -388,6 +283,9 @@ function bindEvents() {
     ["#saturation", "#saturation-value", (v) => parseFloat(v).toFixed(2)],
     ["#sharpness", "#sharpness-value", (v) => parseFloat(v).toFixed(2)],
     ["#vignette", "#vignette-value", (v) => parseFloat(v).toFixed(2)],
+    ["#cartoon-colors", "#cartoon-colors-value", (v) => v],
+    ["#cartoon-edges", "#cartoon-edges-value", (v) => parseFloat(v).toFixed(2)],
+    ["#cartoon-smooth", "#cartoon-smooth-value", (v) => v],
   ];
   sliders.forEach(([slider, output, fmt]) => {
     const s = $(slider), o = $(output);
@@ -436,6 +334,10 @@ function updateFilterControls() {
     "#sharpness",
     "#vignette",
     "#sepia",
+    "#cartoon",
+    "#cartoon-colors",
+    "#cartoon-edges",
+    "#cartoon-smooth",
   ];
   controls.forEach((selector) => {
     const input = $(selector);
@@ -582,6 +484,10 @@ function collectSettings() {
       vignette_strength: parseFloat($("#vignette").value),
       sepia: $("#sepia").checked,
       grayscale_blend: 0,
+      cartoon: $("#cartoon").checked,
+      cartoon_color_levels: parseInt($("#cartoon-colors").value, 10),
+      cartoon_edge_strength: parseFloat($("#cartoon-edges").value),
+      cartoon_smooth_passes: parseInt($("#cartoon-smooth").value, 10),
     },
   };
 }
@@ -640,6 +546,12 @@ function applyPreset(name) {
   setSlider($("#sharpness"), s.filters.sharpness, $("#sharpness-value"), (v) => parseFloat(v).toFixed(2));
   setSlider($("#vignette"), s.filters.vignette_strength, $("#vignette-value"), (v) => parseFloat(v).toFixed(2));
   $("#sepia").checked = !!s.filters.sepia;
+  $("#cartoon").checked = !!s.filters.cartoon;
+  setSlider($("#cartoon-colors"), s.filters.cartoon_color_levels ?? 8, $("#cartoon-colors-value"));
+  setSlider($("#cartoon-edges"), s.filters.cartoon_edge_strength ?? 0.6, $("#cartoon-edges-value"), (v) => parseFloat(v).toFixed(2));
+  setSlider($("#cartoon-smooth"), s.filters.cartoon_smooth_passes ?? 2, $("#cartoon-smooth-value"));
+  const cartoonControls = $("#cartoon-controls");
+  if (cartoonControls) cartoonControls.hidden = !$("#cartoon").checked;
   $("#filters-enabled").dispatchEvent(new Event("change"));
 }
 
@@ -1088,7 +1000,6 @@ async function processInpaint() {
   const radius = parseInt($("#inpaint-radius").value, 10);
   const iterations = parseInt($("#inpaint-iterations").value, 10);
   const algorithm = document.querySelector("input[name='inpaint-algo']:checked").value;
-  const prompt = $("#inpaint-prompt") ? $("#inpaint-prompt").value : "";
 
   let maskBlob;
   try {
@@ -1113,9 +1024,6 @@ async function processInpaint() {
   formData.append("algorithm", algorithm);
   if (algorithm === "lama") {
     formData.append("iterations", String(iterations));
-  }
-  if (algorithm === "sd" && prompt) {
-    formData.append("prompt", prompt);
   }
 
   let resp;

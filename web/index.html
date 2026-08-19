@@ -168,6 +168,24 @@
             <input type="checkbox" id="sepia" />
             <span>Sepia tone</span>
           </label>
+          <label class="checkbox-row">
+            <input type="checkbox" id="cartoon" />
+            <span>Cartoon effect</span>
+          </label>
+          <div id="cartoon-controls" hidden>
+            <label class="slider-row">
+              <span>Color levels <output id="cartoon-colors-value">8</output></span>
+              <input type="range" id="cartoon-colors" min="2" max="16" step="1" value="8" />
+            </label>
+            <label class="slider-row">
+              <span>Edge strength <output id="cartoon-edges-value">0.6</output></span>
+              <input type="range" id="cartoon-edges" min="0" max="1" step="0.05" value="0.6" />
+            </label>
+            <label class="slider-row">
+              <span>Smoothing <output id="cartoon-smooth-value">2</output></span>
+              <input type="range" id="cartoon-smooth" min="0" max="4" step="1" value="2" />
+            </label>
+          </div>
         </div>
       </details>
 
@@ -211,7 +229,6 @@
           <fieldset class="segmented" id="inpaint-algo">
             <legend class="sr-only">Inpainting algorithm</legend>
             <label><input type="radio" name="inpaint-algo" value="lama" checked /><span>AI</span></label>
-            <label><input type="radio" name="inpaint-algo" value="sd" /><span>🎨 Gen</span></label>
             <label><input type="radio" name="inpaint-algo" value="ns" /><span>Smooth</span></label>
             <label><input type="radio" name="inpaint-algo" value="telea" /><span>Fast</span></label>
           </fieldset>
@@ -219,20 +236,6 @@
             <span>AI quality <output id="inpaint-iterations-value">2 passes</output></span>
             <input type="range" id="inpaint-iterations" min="1" max="20" step="1" value="2" />
           </label>
-          <label class="slider-row" id="inpaint-prompt-row" style="display:none">
-            <span>Prompt</span>
-            <input type="text" id="inpaint-prompt" placeholder="e.g. green leaves and branches" />
-          </label>
-          <div id="gen-warning" hidden>
-            <div class="gen-warning-box" id="gen-warning-box">
-              <p id="gen-warning-text">🎨 SD models not downloaded (~4GB).</p>
-              <button id="sd-download-btn" class="btn btn-primary" type="button">Download</button>
-            </div>
-            <div id="sd-progress" hidden>
-              <p id="sd-progress-text">Downloading…</p>
-              <pre id="sd-log" class="sd-log"></pre>
-            </div>
-          </div>
           <label class="slider-row" id="inpaint-radius-row">
             <span>Fill radius <output id="inpaint-radius-value">3</output></span>
             <input type="range" id="inpaint-radius" min="1" max="20" step="1" value="3" />
@@ -296,6 +299,6 @@
     </footer>
   </main>
 
-  <script type="module" src="app.js?v=22"></script>
+  <script type="module" src="app.js?v=23"></script>
 </body>
 </html>

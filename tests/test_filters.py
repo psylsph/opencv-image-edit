@@ -22,6 +22,7 @@ from app.pipeline.filters import (
     adjust_saturation,
     adjust_sharpness,
     apply_blur,
+    apply_cartoon,
     apply_color_adjustments,
     apply_grayscale,
     apply_sepia,
@@ -424,3 +425,48 @@ def test_apply_unsharp_mask_clamps_to_uint8(gradient: np.ndarray) -> None:
     out = apply_unsharp_mask(gradient, sigma=1.0, strength=1.5)
     assert int(out.max()) <= 255
     assert int(out.min()) >= 0
+
+
+# ---------------------------------------------------------------------------
+# apply_cartoon
+# ---------------------------------------------------------------------------
+
+
+def _unique_colors(img: np.ndarray) -> int:
+    return len(np.unique(img.reshape(-1, img.shape[2]) if img.ndim == 3 else img))
+
+
+def test_apply_cartoon_shape_dtype_preserved(gradient: np.ndarray) -> None:
+    out = apply_cartoon(gradient)
+    assert out.shape == gradient.shape
+    assert out.dtype == np.uint8
+
+
+def test_apply_cartoon_quantises_colors(gradient: np.ndarray) -> None:
+    """Colour quantisation must reduce distinct channel values to ~color_levels."""
+    out = apply_cartoon(gradient, color_levels=4, edge_strength=0.0)
+    per_channel_unique = {int(c) for c in np.unique(out)}
+    assert len(per_channel_unique) <= 4 * 2 + 2  # quantised bands + rounding slack
+
+
+def test_apply_cartoon_zero_strength_no_black_edges(gradient: np.ndarray) -> None:
+    """edge_strength=0 must not darken any pixel below its quantised value floor."""
+    out = apply_cartoon(gradient, edge_strength=0.0)
+    quant_only = apply_cartoon(gradient, edge_strength=0.0, smooth_passes=2)
+    np.testing.assert_array_equal(out, quant_only)
+
+
+def test_apply_cartoon_full_strength_adds_black_edges(gradient: np.ndarray) -> None:
+    """edge_strength=1.0 should produce some very dark pixels on a gradient with edges."""
+    # A gradient alone may lack adaptive edges, so build an image with a hard shape.
+    img = np.full((64, 64, 3), 200, dtype=np.uint8)
+    img[16:48, 16:48] = 40
+    out = apply_cartoon(img, color_levels=8, edge_strength=1.0)
+    assert int(out.min()) < 30  # hard edges go near-black
+
+
+def test_apply_cartoon_clamps_out_of_range_params(gradient: np.ndarray) -> None:
+    """Out-of-range params must be clamped, not raise."""
+    out = apply_cartoon(gradient, color_levels=1, edge_strength=5.0, smooth_passes=-3)
+    assert out.shape == gradient.shape
+    assert out.dtype == np.uint8

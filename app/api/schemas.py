@@ -34,6 +34,10 @@ class FiltersRequest(BaseModel):
     vignette_strength: float = Field(default=0.0, ge=0.0, le=1.0)
     sepia: bool = False
     grayscale_blend: float = Field(default=0.0, ge=0.0, le=1.0)
+    cartoon: bool = False
+    cartoon_color_levels: int = Field(default=8, ge=2, le=32)
+    cartoon_edge_strength: float = Field(default=0.6, ge=0.0, le=1.0)
+    cartoon_smooth_passes: int = Field(default=2, ge=0, le=4)
 
 
 class ProcessRequest(BaseModel):

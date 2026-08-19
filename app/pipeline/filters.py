@@ -188,3 +188,55 @@ def apply_unsharp_mask(img: np.ndarray, sigma: float = 1.0, strength: float = 1.
     """
     blurred = cv2.GaussianBlur(img, (0, 0), sigmaX=sigma)
     return cv2.addWeighted(img, 1.0 + strength, blurred, -strength, 0)
+
+
+# ---------------------------------------------------------------------------
+# Cartoon
+# ---------------------------------------------------------------------------
+
+
+def apply_cartoon(
+    img: np.ndarray,
+    color_levels: int = 8,
+    edge_strength: float = 0.6,
+    smooth_passes: int = 2,
+) -> np.ndarray:
+    """Cartoon effect: bilateral smoothing + colour quantisation + dark edges.
+
+    Args:
+        color_levels: number of colour steps per channel (4 = flat/comic,
+            16 = subtle). Values < 2 or > 32 are clamped.
+        edge_strength: 0.0 -> no outlines, 1.0 -> full black outlines.
+        smooth_passes: bilateral filter iterations (0 = no smoothing).
+    """
+    color_levels = max(2, min(32, int(color_levels)))
+    edge_strength = max(0.0, min(1.0, float(edge_strength)))
+    smooth_passes = max(0, min(4, int(smooth_passes)))
+
+    bgr = img if img.ndim == 3 else cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+
+    # 1. Edge-preserving smoothing (flattens skin/texture, keeps structure)
+    smooth = bgr
+    for _ in range(smooth_passes):
+        smooth = cv2.bilateralFilter(smooth, d=9, sigmaColor=75, sigmaSpace=75)
+
+    # 2. Colour quantisation (posterise to `color_levels` bands per channel)
+    step = 255.0 / color_levels
+    quant = np.floor(smooth.astype(np.float32) / step) * step + step * 0.5
+    quant = np.clip(quant, 0, 255).astype(np.uint8)
+
+    if edge_strength <= 0:
+        return quant
+
+    # 3. Dark outlines from adaptive-thresholded edges
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    gray = cv2.medianBlur(gray, 5)
+    edges = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, blockSize=9, C=2
+    )
+    # edges: 255 = flat, 0 = edge. Blend flat image toward black at edges.
+    edge_mask = (edges.astype(np.float32) / 255.0)[:, :, np.newaxis]  # 1 flat, 0 edge
+    # With partial strength, edges darken to (1 - strength) of original
+    blend = edge_mask + (1.0 - edge_mask) * (1.0 - edge_strength)
+    out = quant.astype(np.float32) * blend
+    return np.clip(out, 0, 255).astype(np.uint8)
