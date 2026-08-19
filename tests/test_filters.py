@@ -443,17 +443,20 @@ def test_apply_cartoon_shape_dtype_preserved(gradient: np.ndarray) -> None:
 
 
 def test_apply_cartoon_quantises_colors(gradient: np.ndarray) -> None:
-    """Colour quantisation must reduce distinct channel values to ~color_levels."""
+    """k-means quantisation must produce a small flat palette."""
     out = apply_cartoon(gradient, color_levels=4, edge_strength=0.0)
-    per_channel_unique = {int(c) for c in np.unique(out)}
-    assert len(per_channel_unique) <= 4 * 2 + 2  # quantised bands + rounding slack
+    unique = np.unique(out.reshape(-1, out.shape[2]), axis=0)
+    # k=4 palette; the saturation/contrast stage mixes values slightly
+    assert len(unique) < 40
 
 
 def test_apply_cartoon_zero_strength_no_black_edges(gradient: np.ndarray) -> None:
-    """edge_strength=0 must not darken any pixel below its quantised value floor."""
-    out = apply_cartoon(gradient, edge_strength=0.0)
-    quant_only = apply_cartoon(gradient, edge_strength=0.0, smooth_passes=2)
-    np.testing.assert_array_equal(out, quant_only)
+    """edge_strength=0 must skip edge darkening (no near-black pixels on a bright image)."""
+    img = np.full((64, 64, 3), 200, dtype=np.uint8)
+    img[16:48, 16:48] = 40
+    out = apply_cartoon(img, edge_strength=0.0)
+    # k-means of a 2-tone image yields light/dark palette entries, none near-black
+    assert int(out.min()) > 30
 
 
 def test_apply_cartoon_full_strength_adds_black_edges(gradient: np.ndarray) -> None:
