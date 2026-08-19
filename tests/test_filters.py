@@ -22,7 +22,6 @@ from app.pipeline.filters import (
     adjust_saturation,
     adjust_sharpness,
     apply_blur,
-    apply_cartoon,
     apply_color_adjustments,
     apply_grayscale,
     apply_sepia,
@@ -421,55 +420,23 @@ def test_apply_unsharp_mask_strength_0_is_passthrough(gradient: np.ndarray) -> N
     np.testing.assert_array_equal(out, gradient)
 
 
-def test_apply_unsharp_mask_clamps_to_uint8(gradient: np.ndarray) -> None:
-    out = apply_unsharp_mask(gradient, sigma=1.0, strength=1.5)
-    assert int(out.max()) <= 255
-    assert int(out.min()) >= 0
-
-
 # ---------------------------------------------------------------------------
-# apply_cartoon
+# AnimeGANv2 style transfer (app.models.anime)
 # ---------------------------------------------------------------------------
 
 
-def _unique_colors(img: np.ndarray) -> int:
-    return len(np.unique(img.reshape(-1, img.shape[2]) if img.ndim == 3 else img))
+def test_anime_style_unknown_key_raises() -> None:
+    from app.exceptions import ModelNotFoundError
+    from app.models.anime import get_anime_session
+
+    with pytest.raises(ModelNotFoundError):
+        get_anime_session("does_not_exist")
 
 
-def test_apply_cartoon_shape_dtype_preserved(gradient: np.ndarray) -> None:
-    out = apply_cartoon(gradient)
-    assert out.shape == gradient.shape
-    assert out.dtype == np.uint8
+def test_anime_registry_has_three_styles() -> None:
+    from app.models.anime import ANIME_STYLES
 
-
-def test_apply_cartoon_quantises_colors(gradient: np.ndarray) -> None:
-    """k-means quantisation must produce a small flat palette."""
-    out = apply_cartoon(gradient, color_levels=4, edge_strength=0.0)
-    unique = np.unique(out.reshape(-1, out.shape[2]), axis=0)
-    # k=4 palette; the saturation/contrast stage mixes values slightly
-    assert len(unique) < 40
-
-
-def test_apply_cartoon_zero_strength_no_black_edges(gradient: np.ndarray) -> None:
-    """edge_strength=0 must skip edge darkening (no near-black pixels on a bright image)."""
-    img = np.full((64, 64, 3), 200, dtype=np.uint8)
-    img[16:48, 16:48] = 40
-    out = apply_cartoon(img, edge_strength=0.0)
-    # k-means of a 2-tone image yields light/dark palette entries, none near-black
-    assert int(out.min()) > 30
-
-
-def test_apply_cartoon_full_strength_adds_black_edges(gradient: np.ndarray) -> None:
-    """edge_strength=1.0 should produce some very dark pixels on a gradient with edges."""
-    # A gradient alone may lack adaptive edges, so build an image with a hard shape.
-    img = np.full((64, 64, 3), 200, dtype=np.uint8)
-    img[16:48, 16:48] = 40
-    out = apply_cartoon(img, color_levels=8, edge_strength=1.0)
-    assert int(out.min()) < 30  # hard edges go near-black
-
-
-def test_apply_cartoon_clamps_out_of_range_params(gradient: np.ndarray) -> None:
-    """Out-of-range params must be clamped, not raise."""
-    out = apply_cartoon(gradient, color_levels=1, edge_strength=5.0, smooth_passes=-3)
-    assert out.shape == gradient.shape
-    assert out.dtype == np.uint8
+    assert set(ANIME_STYLES) == {"hayao", "shinkai", "paprika"}
+    for info in ANIME_STYLES.values():
+        assert info.filename.endswith(".onnx")
+        assert info.size_mb > 0

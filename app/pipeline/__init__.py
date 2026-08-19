@@ -15,6 +15,7 @@ from app.api.schemas import ProcessRequest
 from app.config import get_settings
 from app.exceptions import ProcessingError
 from app.models.matting import get_matting_model
+from app.models.anime import apply_anime_style
 from app.pipeline.background import (
     apply_background_blur,
     apply_background_remove,
@@ -24,7 +25,6 @@ from app.pipeline.background import (
 from app.pipeline.comparison import diff_overlay, side_by_side
 from app.pipeline.filters import (
     add_vignette,
-    apply_cartoon,
     apply_color_adjustments,
     apply_grayscale,
     apply_sepia,
@@ -130,13 +130,8 @@ def process_pipeline(
                 bgr = apply_sepia(bgr)
             if request.filters.grayscale_blend > 0:
                 bgr = apply_grayscale(bgr, request.filters.grayscale_blend)
-            if request.filters.cartoon:
-                bgr = apply_cartoon(
-                    bgr,
-                    color_levels=request.filters.cartoon_color_levels,
-                    edge_strength=request.filters.cartoon_edge_strength,
-                    smooth_passes=request.filters.cartoon_smooth_passes,
-                )
+            if request.filters.anime:
+                bgr = apply_anime_style(bgr, request.filters.anime_style)
 
             current = np.dstack([bgr, alpha]) if alpha is not None else bgr
 

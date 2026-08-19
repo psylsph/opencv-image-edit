@@ -52,7 +52,7 @@ const DEFAULT_SETTINGS = {
     enabled: false,
     brightness: 1, contrast: 1, saturation: 1, sharpness: 1,
     vignette_strength: 0, sepia: false, grayscale_blend: 0,
-    cartoon: false, cartoon_color_levels: 8, cartoon_edge_strength: 0.6, cartoon_smooth_passes: 2,
+    anime: false, anime_style: "hayao",
   },
 };
 
@@ -175,9 +175,9 @@ function bindEvents() {
   // that also blocks the checkbox itself, so manual enabling becomes impossible.
   $("#filters-enabled").addEventListener("change", updateFilterControls);
 
-  // Cartoon toggle: show/hide cartoon parameter sliders
-  $("#cartoon").addEventListener("change", (e) => {
-    const controls = $("#cartoon-controls");
+  // Anime toggle: show/hide style selector
+  $("#anime").addEventListener("change", (e) => {
+    const controls = $("#anime-controls");
     if (controls) controls.hidden = !e.target.checked;
   });
 
@@ -283,9 +283,6 @@ function bindEvents() {
     ["#saturation", "#saturation-value", (v) => parseFloat(v).toFixed(2)],
     ["#sharpness", "#sharpness-value", (v) => parseFloat(v).toFixed(2)],
     ["#vignette", "#vignette-value", (v) => parseFloat(v).toFixed(2)],
-    ["#cartoon-colors", "#cartoon-colors-value", (v) => v],
-    ["#cartoon-edges", "#cartoon-edges-value", (v) => parseFloat(v).toFixed(2)],
-    ["#cartoon-smooth", "#cartoon-smooth-value", (v) => v],
   ];
   sliders.forEach(([slider, output, fmt]) => {
     const s = $(slider), o = $(output);
@@ -334,10 +331,8 @@ function updateFilterControls() {
     "#sharpness",
     "#vignette",
     "#sepia",
-    "#cartoon",
-    "#cartoon-colors",
-    "#cartoon-edges",
-    "#cartoon-smooth",
+    "#anime",
+    "input[name='anime-style']",
   ];
   controls.forEach((selector) => {
     const input = $(selector);
@@ -484,10 +479,8 @@ function collectSettings() {
       vignette_strength: parseFloat($("#vignette").value),
       sepia: $("#sepia").checked,
       grayscale_blend: 0,
-      cartoon: $("#cartoon").checked,
-      cartoon_color_levels: parseInt($("#cartoon-colors").value, 10),
-      cartoon_edge_strength: parseFloat($("#cartoon-edges").value),
-      cartoon_smooth_passes: parseInt($("#cartoon-smooth").value, 10),
+      anime: $("#anime").checked,
+      anime_style: checkedRadio("anime-style") || "hayao",
     },
   };
 }
@@ -546,12 +539,11 @@ function applyPreset(name) {
   setSlider($("#sharpness"), s.filters.sharpness, $("#sharpness-value"), (v) => parseFloat(v).toFixed(2));
   setSlider($("#vignette"), s.filters.vignette_strength, $("#vignette-value"), (v) => parseFloat(v).toFixed(2));
   $("#sepia").checked = !!s.filters.sepia;
-  $("#cartoon").checked = !!s.filters.cartoon;
-  setSlider($("#cartoon-colors"), s.filters.cartoon_color_levels ?? 8, $("#cartoon-colors-value"));
-  setSlider($("#cartoon-edges"), s.filters.cartoon_edge_strength ?? 0.6, $("#cartoon-edges-value"), (v) => parseFloat(v).toFixed(2));
-  setSlider($("#cartoon-smooth"), s.filters.cartoon_smooth_passes ?? 2, $("#cartoon-smooth-value"));
-  const cartoonControls = $("#cartoon-controls");
-  if (cartoonControls) cartoonControls.hidden = !$("#cartoon").checked;
+  $("#anime").checked = !!s.filters.anime;
+  const animeStyle = document.querySelector(`input[name='anime-style'][value='${s.filters.anime_style || "hayao"}']`);
+  if (animeStyle) animeStyle.checked = true;
+  const animeControls = $("#anime-controls");
+  if (animeControls) animeControls.hidden = !$("#anime").checked;
   $("#filters-enabled").dispatchEvent(new Event("change"));
 }
 

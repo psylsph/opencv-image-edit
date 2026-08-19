@@ -86,6 +86,24 @@ MODELS: dict[str, dict] = {
         "sha256": "7df918ac3921d3daf0aae1d219776cf0dc4e4935f035af81841b40adcf74fdf2",
         "size_mb": 88.3,
     },
+    "AnimeGANv2_Hayao.onnx": {
+        # AnimeGANv2 Hayao style transfer — classic anime look.
+        "url": "https://huggingface.co/vumichien/AnimeGANv2_Hayao/resolve/main/AnimeGANv2_Hayao.onnx",
+        "sha256": "5a84ca468f3c4fd891fe8c883a3a507ed3e463f4f059985735f6449dae7590b5",
+        "size_mb": 8.6,
+    },
+    "AnimeGANv2_Shinkai.onnx": {
+        # AnimeGANv2 Shinkai style transfer — vivid blues.
+        "url": "https://huggingface.co/vumichien/AnimeGANv2_Shinkai/resolve/main/AnimeGANv2_Shinkai.onnx",
+        "sha256": "4b57475c2bdc71348a52e6d495abc9e346242619fdb0e519a2957c7c7885c4bb",
+        "size_mb": 8.6,
+    },
+    "AnimeGANv2_Paprika.onnx": {
+        # AnimeGANv2 Paprika style transfer — bold saturated colours.
+        "url": "https://huggingface.co/vumichien/AnimeGANv2_Paprika/resolve/main/AnimeGANv2_Paprika.onnx",
+        "sha256": "b0a00eb337092b446e6df9d92f7a5de804880b093b229baf2e9e2ba4696b01a2",
+        "size_mb": 8.6,
+    },
 }
 
 
@@ -268,8 +286,6 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description="Download model files")
     parser.add_argument("target_dir", nargs="?", default=None, help="target directory")
-    parser.add_argument("--base-only", action="store_true", help="skip SD models")
-    parser.add_argument("--sd-only", action="store_true", help="only download SD models")
     args = parser.parse_args()
 
     target_dir = (
@@ -317,109 +333,7 @@ def main() -> int:
             print(f"  - {name}: {err}")
         return 1
     print("All base models downloaded successfully.")
-
-    # --- SD models (optional, ~4GB) ---
-    if args.base_only:
-        print("\nSkipping SD models (--base-only)")
-        return 0
-
-    if args.sd_only:
-        print("\n--sd-only: skipping base models (already downloaded)")
-    else:
-        print()
-        print("=" * 60)
-        print("Stable Diffusion 1.5 Inpainting (optional, ~4GB)")
-        print("=" * 60)
-    download_sd_models(target_dir)
-
     return 0
-
-
-# --- Stable Diffusion model downloads ---
-
-_SD_REPO = "modularai/stable-diffusion-1.5-onnx"
-_SD_FILES = {
-    "text_encoder/model.onnx": ("text_encoder/model.onnx", 469),
-    "unet/model.onnx": ("unet/model.onnx", 1),
-    "unet/model.onnx_data": ("unet/model.onnx_data", 3278),
-    "vae_encoder/model.onnx": ("vae_encoder/model.onnx", 130),
-    "vae_decoder/model.onnx": ("vae_decoder/model.onnx", 188),
-    "tokenizer/vocab.json": ("tokenizer/vocab.json", 1),
-    "tokenizer/merges.txt": ("tokenizer/merges.txt", 1),
-    "tokenizer/tokenizer_config.json": ("tokenizer/tokenizer_config.json", 1),
-    "tokenizer/special_tokens_map.json": ("tokenizer/special_tokens_map.json", 1),
-}
-
-
-def _sd_files_complete(sd_dir: Path) -> bool:
-    """True only if every SD file exists and is (near-)complete."""
-    for subdir_path, (_repo_path, size_mb) in _SD_FILES.items():
-        dest = sd_dir / subdir_path
-        if not dest.exists():
-            return False
-        expected_bytes = size_mb * 1024 * 1024
-        have = dest.stat().st_size
-        big = expected_bytes > 5 * 1024 * 1024
-        complete = (have >= 0.9 * expected_bytes) if big else (have > 100)
-        if not complete:
-            return False
-    return True
-
-
-def download_sd_models(target_dir: Path) -> None:
-    """Download SD 1.5 ONNX models (~4GB). Optional — LaMa is the default."""
-    sd_dir = target_dir / "sd-inpainting"
-
-    # Check if already downloaded: every file must be present and complete.
-    # (The old check only tested unet/model.onnx_data > 1GB, which a partial
-    # interrupted download also passes — leaving vae/tokenizer missing forever.)
-    if _sd_files_complete(sd_dir):
-        print("  SD models already present.")
-        return
-
-    print(f"  Downloading to: {sd_dir}")
-    print(f"  Source: {_SD_REPO}")
-    print("  Total: ~4GB (this will take several minutes)")
-    print()
-
-    base_url = f"https://huggingface.co/{_SD_REPO}/resolve/main"
-    for subdir_path, (repo_path, size_mb) in _SD_FILES.items():
-        dest = sd_dir / subdir_path
-        dest.parent.mkdir(parents=True, exist_ok=True)
-
-        expected_bytes = size_mb * 1024 * 1024
-        if dest.exists():
-            have = dest.stat().st_size
-            # A file is trusted only within [90%, 110%] of the expected size.
-            # A partial 3 GB ``model.onnx_data`` used to be silently skipped as
-            # "already present"; an OVERSIZED file (two concurrent downloads
-            # appending to the same path) is equally corrupt — interleaved
-            # garbage that ORT reads at fixed offsets. Small files (tokenizer
-            # config, the small UNet graph) just need to be non-trivially
-            # present; their ``size_mb`` entries are approximate.
-            big = expected_bytes > 5 * 1024 * 1024
-            complete = (0.9 * expected_bytes <= have <= 1.1 * expected_bytes) if big else (have > 100)
-            if complete:
-                print(f"  [{subdir_path}] already present ({have / 1024 / 1024:.0f} MB)")
-                continue
-            if have > 1.1 * expected_bytes:
-                print(
-                    f"  [{subdir_path}] OVERSIZED ({have / 1024 / 1024:.0f} MB > "
-                    f"~{size_mb} MB) — corrupt (likely concurrent writes), re-downloading"
-                )
-            else:
-                print(
-                    f"  [{subdir_path}] partial ({have / 1024 / 1024:.1f} MB of "
-                    f"~{size_mb} MB) — re-downloading from scratch"
-                )
-            dest.unlink()
-
-        print(f"  [{subdir_path}] downloading (~{size_mb} MB)...")
-        _download(f"{base_url}/{repo_path}", dest)
-        print(f"  [{subdir_path}] OK")
-
-    print()
-    print("  SD models downloaded successfully.")
 
 
 if __name__ == "__main__":
