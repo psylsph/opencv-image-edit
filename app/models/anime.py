@@ -59,6 +59,12 @@ ANIME_STYLES: dict[str, AnimeStyleInfo] = {
         description="4.2 MB · Ghibli-style, soft hand-drawn 90s look",
         size_mb=4.2,
     ),
+    "jp_face": AnimeStyleInfo(
+        filename="AnimeGANv3_JP_face.onnx",
+        display_name="JP Face",
+        description="6.1 MB · stylised anime faces, cel-shaded 3D-cartoon feel",
+        size_mb=6.1,
+    ),
 }
 
 _SESSIONS: dict[str, ort.InferenceSession] = {}

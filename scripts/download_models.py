@@ -111,6 +111,13 @@ MODELS: dict[str, dict] = {
         "sha256": "95ba7b219073fd5b12f569bc38056ffd3019cf4caf15b1feb9f73d1286c9f69d",
         "size_mb": 4.2,
     },
+    "AnimeGANv3_JP_face.onnx": {
+        # AnimeGANv3 JP_face — stylised anime faces, cel-shaded cartoon feel.
+        # Same I/O contract as v2 (NHWC RGB [-1,1], mult-of-8), dynamic size.
+        "url": "https://huggingface.co/vumichien/AnimeGANv3_JP_face/resolve/main/AnimeGANv3_JP_face.onnx",
+        "sha256": "1e5f85aa230c64df96278b26bf51bc75d4327156e2f8606e613fa1574d8a6fff",
+        "size_mb": 6.1,
+    },
     "fast_neural_style_rain_princess-9.onnx": {
         # Fast Neural Style 'Rain Princess' — oil-painting brushwork.
         "url": "https://github.com/onnx/models/raw/main/validated/vision/style_transfer/fast_neural_style/model/rain-princess-9.onnx",
