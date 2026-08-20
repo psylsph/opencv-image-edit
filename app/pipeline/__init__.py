@@ -16,6 +16,7 @@ from app.config import get_settings
 from app.exceptions import ProcessingError
 from app.models.matting import get_matting_model
 from app.models.anime import apply_anime_style
+from app.models.painting import apply_paint_style
 from app.pipeline.background import (
     apply_background_blur,
     apply_background_remove,
@@ -132,6 +133,8 @@ def process_pipeline(
                 bgr = apply_grayscale(bgr, request.filters.grayscale_blend)
             if request.filters.anime:
                 bgr = apply_anime_style(bgr, request.filters.anime_style)
+            if request.filters.painting:
+                bgr = apply_paint_style(bgr, request.filters.painting_style)
 
             current = np.dstack([bgr, alpha]) if alpha is not None else bgr
 

@@ -53,6 +53,7 @@ const DEFAULT_SETTINGS = {
     brightness: 1, contrast: 1, saturation: 1, sharpness: 1,
     vignette_strength: 0, sepia: false, grayscale_blend: 0,
     anime: false, anime_style: "hayao",
+    painting: false, painting_style: "oil",
   },
 };
 
@@ -178,6 +179,12 @@ function bindEvents() {
   // Anime toggle: show/hide style selector
   $("#anime").addEventListener("change", (e) => {
     const controls = $("#anime-controls");
+    if (controls) controls.hidden = !e.target.checked;
+  });
+
+  // Painting toggle: show/hide style selector
+  $("#painting").addEventListener("change", (e) => {
+    const controls = $("#painting-controls");
     if (controls) controls.hidden = !e.target.checked;
   });
 
@@ -333,6 +340,8 @@ function updateFilterControls() {
     "#sepia",
     "#anime",
     "input[name='anime-style']",
+    "#painting",
+    "input[name='painting-style']",
   ];
   controls.forEach((selector) => {
     const input = $(selector);
@@ -481,6 +490,8 @@ function collectSettings() {
       grayscale_blend: 0,
       anime: $("#anime").checked,
       anime_style: checkedRadio("anime-style") || "hayao",
+      painting: $("#painting").checked,
+      painting_style: checkedRadio("painting-style") || "oil",
     },
   };
 }
@@ -544,6 +555,11 @@ function applyPreset(name) {
   if (animeStyle) animeStyle.checked = true;
   const animeControls = $("#anime-controls");
   if (animeControls) animeControls.hidden = !$("#anime").checked;
+  $("#painting").checked = !!s.filters.painting;
+  const paintStyle = document.querySelector(`input[name='painting-style'][value='${s.filters.painting_style || "oil"}']`);
+  if (paintStyle) paintStyle.checked = true;
+  const paintControls = $("#painting-controls");
+  if (paintControls) paintControls.hidden = !$("#painting").checked;
   $("#filters-enabled").dispatchEvent(new Event("change"));
 }
 

@@ -36,6 +36,8 @@ class FiltersRequest(BaseModel):
     grayscale_blend: float = Field(default=0.0, ge=0.0, le=1.0)
     anime: bool = False
     anime_style: Literal["hayao", "shinkai", "paprika"] = "hayao"
+    painting: bool = False
+    painting_style: Literal["oil", "painterly", "pointillism"] = "oil"
 
 
 class ProcessRequest(BaseModel):

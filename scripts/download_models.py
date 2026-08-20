@@ -104,6 +104,24 @@ MODELS: dict[str, dict] = {
         "sha256": "b0a00eb337092b446e6df9d92f7a5de804880b093b229baf2e9e2ba4696b01a2",
         "size_mb": 8.6,
     },
+    "fast_neural_style_rain_princess-9.onnx": {
+        # Fast Neural Style 'Rain Princess' — oil-painting brushwork.
+        "url": "https://github.com/onnx/models/raw/main/validated/vision/style_transfer/fast_neural_style/model/rain-princess-9.onnx",
+        "sha256": "4162912e6f75fedef6f810ae989b9e10d3d5d43308dab34b027c850cf255e152",
+        "size_mb": 6.7,
+    },
+    "fast_neural_style_udnie-9.onnx": {
+        # Fast Neural Style 'Udnie' — soft modern painterly look.
+        "url": "https://github.com/onnx/models/raw/main/validated/vision/style_transfer/fast_neural_style/model/udnie-9.onnx",
+        "sha256": "8656b6ce7dec8f22ee13c2d557d6b67bd6f550dde88d0f2e7c9972aeb765cc0d",
+        "size_mb": 6.7,
+    },
+    "fast_neural_style_pointilism-9.onnx": {
+        # Fast Neural Style 'Pointillism' — dotted impressionist texture.
+        "url": "https://github.com/onnx/models/raw/main/validated/vision/style_transfer/fast_neural_style/model/pointilism-9.onnx",
+        "sha256": "5ee2b8d4d6bc60a777f54e0fe96a1b717360a004b79d56c67390d4a975b14d98",
+        "size_mb": 6.7,
+    },
 }
 
 

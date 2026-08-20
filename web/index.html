@@ -181,6 +181,19 @@
             </fieldset>
             <p class="control-hint">AI style transfer · Hayao: classic anime, Shinkai: vivid blues, Paprika: bold colours</p>
           </div>
+          <label class="checkbox-row">
+            <input type="checkbox" id="painting" />
+            <span>Painting style</span>
+          </label>
+          <div id="painting-controls" hidden>
+            <fieldset class="segmented" id="painting-style">
+              <legend class="sr-only">Painting style</legend>
+              <label><input type="radio" name="painting-style" value="oil" checked /><span>Oil</span></label>
+              <label><input type="radio" name="painting-style" value="painterly" /><span>Painterly</span></label>
+              <label><input type="radio" name="painting-style" value="pointillism" /><span>Pointillist</span></label>
+            </fieldset>
+            <p class="control-hint">AI style transfer · Oil: rich brushwork, Painterly: soft modern, Pointillist: impressionist dots</p>
+          </div>
         </div>
       </details>
 
@@ -294,6 +307,6 @@
     </footer>
   </main>
 
-  <script type="module" src="app.js?v=24"></script>
+  <script type="module" src="app.js?v=25"></script>
 </body>
 </html>
