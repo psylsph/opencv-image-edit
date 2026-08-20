@@ -53,6 +53,12 @@ ANIME_STYLES: dict[str, AnimeStyleInfo] = {
         description="8.6 MB · bold saturated colours",
         size_mb=8.6,
     ),
+    "hayao3": AnimeStyleInfo(
+        filename="AnimeGANv3_Hayao_36.onnx",
+        display_name="Hayao v3",
+        description="4.2 MB · Ghibli-style, soft hand-drawn 90s look",
+        size_mb=4.2,
+    ),
 }
 
 _SESSIONS: dict[str, ort.InferenceSession] = {}

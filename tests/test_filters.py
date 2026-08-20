@@ -433,10 +433,10 @@ def test_anime_style_unknown_key_raises() -> None:
         get_anime_session("does_not_exist")
 
 
-def test_anime_registry_has_three_styles() -> None:
+def test_anime_registry_has_expected_styles() -> None:
     from app.models.anime import ANIME_STYLES
 
-    assert set(ANIME_STYLES) == {"hayao", "shinkai", "paprika"}
+    assert set(ANIME_STYLES) == {"hayao", "shinkai", "paprika", "hayao3"}
     for info in ANIME_STYLES.values():
         assert info.filename.endswith(".onnx")
         assert info.size_mb > 0

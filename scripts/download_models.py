@@ -104,6 +104,13 @@ MODELS: dict[str, dict] = {
         "sha256": "b0a00eb337092b446e6df9d92f7a5de804880b093b229baf2e9e2ba4696b01a2",
         "size_mb": 8.6,
     },
+    "AnimeGANv3_Hayao_36.onnx": {
+        # AnimeGANv3 Hayao — Ghibli-style, soft hand-drawn 90s look.
+        # Same I/O contract as v2 (NHWC RGB [-1,1], mult-of-8), dynamic size.
+        "url": "https://github.com/TachibanaYoshino/AnimeGANv3/releases/download/v1.1.0/AnimeGANv3_Hayao_36.onnx",
+        "sha256": "95ba7b219073fd5b12f569bc38056ffd3019cf4caf15b1feb9f73d1286c9f69d",
+        "size_mb": 4.2,
+    },
     "fast_neural_style_rain_princess-9.onnx": {
         # Fast Neural Style 'Rain Princess' — oil-painting brushwork.
         "url": "https://github.com/onnx/models/raw/main/validated/vision/style_transfer/fast_neural_style/model/rain-princess-9.onnx",
