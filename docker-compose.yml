@@ -9,13 +9,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: opencv-image-edit:1.5.0
+    image: opencv-image-edit:1.6.0
     container_name: opencv-image-edit
     restart: unless-stopped
     # Keep image processing from starving Docker, Tailscale, or the host.
     # These limits leave headroom for the 4-core/16 GB server.
-    # 8g needed for SD 1.5 inpainting (fp32 UNet is 5.4GB on disk; ORT
-    # arena peaks ~6-7GB on first inference pass).
+    # BiRefNet Tiny at 1024px exceeds 4g during inference (confirmed OOM).
+    # Retain host headroom while allowing its working-memory peak.
     mem_limit: 8g
     cpus: 3.0
     pids_limit: 256

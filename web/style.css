@@ -398,49 +398,6 @@ img { max-width: 100%; height: auto; display: block; }
 .segmented label:hover > span { background: rgba(255, 255, 255, 0.04); }
 .segmented input[type="radio"]:checked + span:hover { background: var(--accent); }
 
-/* Generative warning box */
-.sd-warning-box, .gen-warning-box {
-  background: rgba(255, 180, 70, 0.10);
-  border: 1px solid rgba(255, 180, 70, 0.35);
-  border-radius: var(--radius-sm);
-  padding: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.sd-warning-box p, .gen-warning-box p {
-  margin: 0;
-  font-size: 13px;
-  flex: 1;
-}
-.sd-warning-box .btn, .gen-warning-box .btn {
-  flex: 0 0 auto;
-  padding: 6px 14px;
-  font-size: 13px;
-  min-height: 36px;
-}
-.sd-log {
-  font-size: 11px;
-  line-height: 1.45;
-  max-height: 120px;
-  overflow-y: auto;
-  background: var(--surface-2);
-  border-radius: var(--radius-sm);
-  padding: 8px;
-  margin: 8px 0 0;
-  white-space: pre-wrap;
-  word-break: break-all;
-  color: var(--fg-dim);
-  border: 1px solid var(--border);
-}
-#sd-progress-text {
-  font-size: 13px;
-  color: var(--accent);
-  margin: 8px 0 0;
-  font-weight: 500;
-}
-
 /* Slider / select / checkbox rows */
 .slider-row, .select-row {
   display: flex;

@@ -1,14 +1,12 @@
 """Image inpainting (object removal).
 
-Four algorithms are available:
+Three algorithms are available:
 - ``telea``  — Fast Marching Method (Telea 2004), fast, classic cv2 inpaint
 - ``ns``     — Navier-Stokes fluid dynamics, smoother than TELEA, classic cv2 inpaint
 - ``lama``   — LaMa: Resolution-robust Large Mask Inpainting with Fourier
                Convolutions (WACV 2022). Fast AI inpainting. Default.
-- ``sd``     — Stable Diffusion 1.5 Inpainting: generative fill that invents
-               realistic content via text prompt. Slowest (~30-120s CPU).
 
-All four take a uint8 mask where non-zero pixels are the areas to be removed.
+All three take a uint8 mask where non-zero pixels are the areas to be removed.
 The default algorithm is "lama" (fast, good quality, ~4s on CPU).
 """
 
@@ -29,16 +27,12 @@ MAX_RADIUS = 100
 DEFAULT_ALGORITHM = "lama"
 
 
-GEN_ALGORITHMS = {"sd"}
-
-
 def inpaint(
     img: np.ndarray,
     mask: np.ndarray,
     radius: int = 3,
     algorithm: str = DEFAULT_ALGORITHM,
     iterations: int = 1,
-    prompt: str = "",
 ) -> np.ndarray:
     """Remove masked regions from the image and fill them in.
 
@@ -46,15 +40,14 @@ def inpaint(
         img: uint8 image (2D, 3D BGR, or 3D BGRA).
         mask: uint8 single-channel mask, non-zero = to remove.
         radius: Inpainting neighborhood radius (1-100). TELEA/NS only.
-        algorithm: "lama" (default), "sd" (local gen), "telea", or "ns".
-        iterations: LaMa passes. Ignored by TELEA/NS/SD.
-        prompt: Text prompt for generative fill (algorithm="sd").
+        algorithm: "lama" (default), "telea", or "ns".
+        iterations: LaMa passes. Ignored by TELEA/NS.
 
     Returns:
         uint8 image, same shape and channel count as input.
     """
-    valid_algos = list(SUPPORTED_ALGORITHMS) + ["lama", "sd"]
-    if algorithm not in SUPPORTED_ALGORITHMS and algorithm not in ("lama", "sd"):
+    valid_algos = list(SUPPORTED_ALGORITHMS) + ["lama"]
+    if algorithm not in SUPPORTED_ALGORITHMS and algorithm != "lama":
         raise ValidationError(f"unsupported algorithm: {algorithm!r}; choose from {valid_algos}")
     if mask.dtype != np.uint8:
         raise ValidationError(f"mask must be uint8, got {mask.dtype}")
@@ -78,11 +71,6 @@ def inpaint(
     if algorithm == "lama":
         lama = LaMa.get()
         out = lama.infer(bgr, mask, iterations=iterations)
-    elif algorithm == "sd":
-        from app.models.sd_inpaint import SDInpaint
-
-        sd = SDInpaint.get()
-        out = sd.inpaint(bgr, mask, prompt=prompt or "")
     else:
         if radius < MIN_RADIUS or radius > MAX_RADIUS:
             raise ValidationError(f"radius must be in [{MIN_RADIUS}, {MAX_RADIUS}], got {radius}")

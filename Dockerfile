@@ -27,8 +27,7 @@ RUN apt-get update \
 COPY scripts/download_models.py /dl/download_models.py
 
 # Run the downloader; output goes to /models
-# --base-only: SD models (~4GB) are downloaded on-demand at runtime
-RUN python /dl/download_models.py /models --base-only
+RUN python /dl/download_models.py /models
 
 
 # =============================================================
