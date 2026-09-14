@@ -61,6 +61,9 @@ class MobileSAM:
 
     @classmethod
     def get(cls, model_dir: Path | str | None = None) -> MobileSAM:
+        from app.model_cache import mark_model_used
+
+        mark_model_used()
         if cls._instance is not None:
             return cls._instance
         with cls._lock:

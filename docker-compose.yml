@@ -9,7 +9,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: opencv-image-edit:1.6.0
+    image: opencv-image-edit:1.6.1
     container_name: opencv-image-edit
     restart: unless-stopped
     # Keep image processing from starving Docker, Tailscale, or the host.
@@ -30,6 +30,7 @@ services:
       MAX_IMAGE_SIZE_MB: "10"
       MAX_IMAGE_DIMENSION: "1536"
       MODEL_DIR: "/home/app/models"
+      MODEL_IDLE_TIMEOUT_SECONDS: "180"
       ENABLE_METRICS: "true"
       METRICS_PORT: "9090"
     volumes:

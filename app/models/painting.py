@@ -68,6 +68,9 @@ _OVERLAP = 32        # pixels of overlap between tiles
 
 def get_paint_session(style: str) -> ort.InferenceSession:
     """Return (and cache) an ONNX session for the given style key."""
+    from app.model_cache import mark_model_used
+
+    mark_model_used()
     if style not in PAINT_STYLES:
         raise ModelNotFoundError(
             f"unknown painting style '{style}'; valid: {sorted(PAINT_STYLES)}"
@@ -83,6 +86,12 @@ def get_paint_session(style: str) -> ort.InferenceSession:
                 str(path), providers=["CPUExecutionProvider"]
             )
         return _SESSIONS[style]
+
+
+def clear_paint_cache() -> None:
+    """Release all cached painting-style ONNX sessions."""
+    with _LOCK:
+        _SESSIONS.clear()
 
 
 def _run_tile(session: ort.InferenceSession, tile_bgr: np.ndarray) -> np.ndarray:

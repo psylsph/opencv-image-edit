@@ -61,11 +61,12 @@ class TestHealthEndpoint:
         assert isinstance(models, dict)
         # The matting model key is always reported
         assert "matting" in models
-        # The status is one of "loaded" or "missing: <ErrorClass>"
+        # Health checks report file availability without loading model sessions.
         for key, status in models.items():
-            assert status == "loaded" or status.startswith("missing:"), (
+            assert status == "available" or status.startswith("missing:"), (
                 f"unexpected status for {key!r}: {status!r}"
             )
+        assert body["model_idle_timeout_seconds"] == 180
 
     def test_health_includes_upscale_models(self, test_client: TestClient):
         response = test_client.get("/health")

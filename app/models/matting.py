@@ -162,6 +162,9 @@ def get_matting_model(
     Each model variant is loaded lazily on first use and kept in a per-key
     cache, so switching models in the UI doesn't reload previously used ones.
     """
+    from app.model_cache import mark_model_used
+
+    mark_model_used()
     if model_name not in MATTING_MODELS:
         raise ModelNotFoundError(
             f"unknown matting model '{model_name}'. "

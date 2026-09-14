@@ -49,6 +49,9 @@ class Upscaler:
             ValueError: if ``algorithm`` or ``scale`` is not supported.
             ModelNotFoundError: if the expected ``.pb`` file is missing.
         """
+        from app.model_cache import mark_model_used
+
+        mark_model_used()
         if algorithm not in SUPPORTED_ALGORITHMS:
             raise ValueError(
                 f"unsupported algorithm: {algorithm!r}; choose from {SUPPORTED_ALGORITHMS}"

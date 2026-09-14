@@ -77,6 +77,9 @@ _MODELS_DIR = Path(get_settings().model_dir)
 
 def get_anime_session(style: str) -> ort.InferenceSession:
     """Return (and cache) an ONNX session for the given style key."""
+    from app.model_cache import mark_model_used
+
+    mark_model_used()
     if style not in ANIME_STYLES:
         raise ModelNotFoundError(
             f"unknown anime style '{style}'; valid: {sorted(ANIME_STYLES)}"
@@ -92,6 +95,12 @@ def get_anime_session(style: str) -> ort.InferenceSession:
                 str(path), providers=["CPUExecutionProvider"]
             )
         return _SESSIONS[style]
+
+
+def clear_anime_cache() -> None:
+    """Release all cached AnimeGAN ONNX sessions."""
+    with _LOCK:
+        _SESSIONS.clear()
 
 
 def apply_anime_style(img: np.ndarray, style: str) -> np.ndarray:
