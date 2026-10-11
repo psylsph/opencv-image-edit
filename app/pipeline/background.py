@@ -79,6 +79,33 @@ def apply_background_remove(
     return np.dstack([img_bgr, alpha_u8])
 
 
+def background_paint_mask_to_foreground_alpha(
+    painted_background_mask: np.ndarray,
+    img_shape: tuple[int, int],
+) -> np.ndarray:
+    """Convert a user-painted background mask into foreground alpha.
+
+    UI/background-paint convention is the inverse of the matting convention:
+    white/non-zero pixels are explicitly marked as background. The background
+    compositors expect ``1 = foreground`` and ``0 = background``, so invert the
+    mask after resizing it to image size.
+    """
+    if painted_background_mask.ndim == 3:
+        if painted_background_mask.shape[2] == 4:
+            # Browser masks may arrive as transparent PNGs with white strokes.
+            # Alpha is the most reliable signal for "painted" pixels.
+            painted_background_mask = painted_background_mask[:, :, 3]
+        else:
+            painted_background_mask = cv2.cvtColor(painted_background_mask[:, :, :3], cv2.COLOR_BGR2GRAY)
+
+    painted = painted_background_mask.astype(np.float32)
+    if painted.max(initial=0) > 1.0:
+        painted = painted / 255.0
+    painted = _resize_mask_to_image(painted, img_shape)
+    painted = np.clip(painted, 0.0, 1.0)
+    return 1.0 - painted
+
+
 def get_alpha_debug(mask: np.ndarray) -> np.ndarray:
     """Convert float mask to uint8 debug visualization with autocontrast.
 

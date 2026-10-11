@@ -46,13 +46,15 @@ const state = {
 
 // --- Defaults (used by Reset and on first load) ---
 const DEFAULT_SETTINGS = {
-  background: { enabled: false, mode: "blur", blur_strength: 15, model_name: "u2netp" },
+  background: { enabled: false, mode: "blur", blur_strength: 15, model_name: "birefnet_tiny" },
   grain: { enabled: false, intensity: 0.4 },
   upscale: { enabled: false, scale: 2, algorithm: "interp" },
   filters: {
     enabled: false,
     brightness: 1, contrast: 1, saturation: 1, sharpness: 1,
     vignette_strength: 0, sepia: false, grayscale_blend: 0,
+    anime: false, anime_style: "hayao",
+    painting: false, painting_style: "oil",
   },
 };
 
@@ -63,7 +65,36 @@ async function init() {
   bindEvents();
   applyPreset(null); // start at defaults
   setMaskMode("click"); // initialize mask mode UI
+  loadModels();
   registerServiceWorker();
+}
+
+async function loadModels() {
+  try {
+    const resp = await fetch("/api/v1/models");
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const select = $("#bg-model");
+    if (!select) return;
+    select.innerHTML = "";
+    for (const m of data.models) {
+      const opt = document.createElement("option");
+      opt.value = m.key;
+      opt.textContent = m.display_name;
+      if (!m.available) {
+        opt.textContent += " (not downloaded)";
+        opt.disabled = true;
+      }
+      select.appendChild(opt);
+    }
+    select.value = "birefnet_tiny";
+    select.disabled = false;
+  } catch (err) {
+    console.error("Failed to load models:", err);
+    // Keep the default u2netp option
+    const select = $("#bg-model");
+    if (select) select.disabled = false;
+  }
 }
 
 async function loadPresets() {
@@ -110,13 +141,25 @@ function bindEvents() {
   // Background enabled toggle: dim sub-controls when off
   $("#bg-enabled").addEventListener("change", (e) => {
     setGroupDisabled("#bg-mode", !e.target.checked);
+    setGroupDisabled("#bg-source", !e.target.checked);
     setRowDisabled("#blur-strength-row", !e.target.checked);
+    updateBackgroundMaskControls();
   });
 
   // Background mode: hide blur-strength row when in "remove" mode
   $$("input[name='bg-mode']").forEach((r) => {
     r.addEventListener("change", updateBlurStrengthVisibility);
   });
+  // Background source: auto matting or manual painted background mask
+  $$("input[name='bg-source']").forEach((r) => {
+    r.addEventListener("change", updateBackgroundMaskControls);
+  });
+  $("#bg-brush-size").addEventListener("input", (e) => {
+    state.mask.brushSize = parseInt(e.target.value, 10);
+    $("#bg-brush-value").textContent = state.mask.brushSize;
+  });
+  $("#bg-mask-undo").addEventListener("click", undoMaskStroke);
+  $("#bg-mask-clear").addEventListener("click", clearMask);
 
   // Grain enabled toggle
   $("#grain-enabled").addEventListener("change", (e) => {
@@ -130,25 +173,40 @@ function bindEvents() {
     if (algoRow) algoRow.disabled = !e.target.checked;
   });
 
-  // Filters enabled toggle
-  $("#filters-enabled").addEventListener("change", (e) => {
-    const body = $("#filters-group .control-body");
-    if (body) {
-      body.style.opacity = e.target.checked ? "1" : "0.5";
-      body.style.pointerEvents = e.target.checked ? "auto" : "none";
-    }
+  // Filters enabled toggle. Do not disable pointer events on the whole body:
+  // that also blocks the checkbox itself, so manual enabling becomes impossible.
+  $("#filters-enabled").addEventListener("change", updateFilterControls);
+
+  // Anime toggle: show/hide style selector
+  $("#anime").addEventListener("change", (e) => {
+    const controls = $("#anime-controls");
+    if (controls) controls.hidden = !e.target.checked;
+  });
+
+  // Painting toggle: show/hide style selector
+  $("#painting").addEventListener("change", (e) => {
+    const controls = $("#painting-controls");
+    if (controls) controls.hidden = !e.target.checked;
   });
 
   // Auto-expand a section's <details> when its toggle is switched on
-  $$(".control-group summary input[type='checkbox']").forEach((cb) => {
+  [
+    ["#bg-enabled", "#bg-group"],
+    ["#grain-enabled", "#grain-group"],
+    ["#upscale-enabled", "#upscale-group"],
+    ["#filters-enabled", "#filters-group"],
+    ["#inpaint-enabled", "#inpaint-group"],
+  ].forEach(([cbSel, groupSel]) => {
+    const cb = $(cbSel);
+    const details = $(groupSel);
+    if (!cb || !details) return;
     cb.addEventListener("change", () => {
-      const details = cb.closest("details");
-      if (details && cb.checked) details.open = true;
+      if (cb.checked) details.open = true;
     });
   });
 
-  // Inpaint (object removal) and Blur Area share one selection canvas; only one
-  // group can own it at a time.
+  // Inpaint (object removal) and Blur Area share one selection canvas (also used
+  // by Background "Paint BG"); only one of the two selection groups owns it.
   for (const owner of ["inpaint", "blur"]) {
     const other = owner === "inpaint" ? "blur" : "inpaint";
     $(`#${owner}-enabled`).addEventListener("change", (e) => {
@@ -157,15 +215,25 @@ function bindEvents() {
         clearClickSelection();
         state.mask.owner = owner;
         state.mask.enabled = true;
-        $("#mask-canvas").hidden = false;
         // restore this group's mode (click/paint) on the shared canvas
         setMaskMode(document.querySelector(`input[name='${owner}-mode']:checked`).value);
-        if (state.mask.imageW) setupMaskCanvas();
       } else if (state.mask.owner === owner) {
         state.mask.enabled = false;
-        $("#mask-canvas").hidden = true;
-        clearClickSelection();
+        if (isBackgroundPaintActive()) {
+          // Keep any painted background mask; just drop the click selection.
+          state.mask.detectedMask = null;
+          state.mask.detectionScore = 0;
+          for (const o of ["inpaint", "blur"]) {
+            $(`#${o}-click-actions`).hidden = true;
+            $(`#${o}-click-status`).hidden = true;
+            $(`#${o}-click-status`).textContent = "";
+          }
+        } else {
+          clearClickSelection();
+        }
       }
+      updateMaskCanvasVisibility();
+      updateBackgroundMaskControls();
     });
     // Mode switcher (Click vs Paint)
     $$(`input[name='${owner}-mode']`).forEach((r) => {
@@ -209,13 +277,10 @@ function bindEvents() {
     if (!checked) return;
     const val = checked.value;
     const row = $("#inpaint-radius-row");
-    const promptRow = $("#inpaint-prompt-row");
     const iterationsRow = $("#inpaint-iterations-row");
-    // LaMa and SD don't use radius; only NS/TELEA do
+    // LaMa doesn't use radius; only NS/TELEA do
     if (row) row.style.display = (val === "ns" || val === "telea") ? "flex" : "none";
-    // Prompt field shows for SD only
-    if (promptRow) promptRow.style.display = val === "sd" ? "flex" : "none";
-    // Iteration passes improve LaMa only; SD has fixed DDIM steps, NS/TELEA use radius
+    // Iteration passes improve LaMa only; NS/TELEA use radius
     if (iterationsRow) iterationsRow.style.display = val === "lama" ? "flex" : "none";
   }
   $$("input[name='inpaint-algo']").forEach((r) => {
@@ -223,115 +288,6 @@ function bindEvents() {
   });
   updateInpaintRadiusVisibility();
 
-  // --- Generative model status (SD only) ---
-  let sdAvailable = false;
-  let sdPollTimer = null;
-
-  async function checkSdStatus() {
-    try {
-      const resp = await fetch("/api/v1/sd/status");
-      const data = await resp.json();
-      sdAvailable = data.available;
-      updateGenWarning();
-    } catch {
-      // endpoint not available — assume SD not set up
-    }
-  }
-
-  function updateGenWarning() {
-    const checked = document.querySelector("input[name='inpaint-algo']:checked");
-    if (!checked) return;
-    const warning = $("#gen-warning");
-    const warningText = $("#gen-warning-text");
-    const dlBtn = $("#sd-download-btn");
-    if (!warning) return;
-
-    if (checked.value === "sd" && !sdAvailable) {
-      warning.hidden = false;
-      if (warningText) warningText.textContent = "🎨 SD models not downloaded (~4GB).";
-      if (dlBtn) dlBtn.style.display = "";
-    } else {
-      warning.hidden = true;
-    }
-  }
-
-  // Re-check warning visibility when algorithm changes
-  $$("#inpaint-algo input[type='radio']").forEach((r) => {
-    r.addEventListener("change", updateGenWarning);
-  });
-
-  // Download button handler
-  $("#sd-download-btn")?.addEventListener("click", async () => {
-    const btn = $("#sd-download-btn");
-    const progress = $("#sd-progress");
-    const progressText = $("#sd-progress-text");
-    const logEl = $("#sd-log");
-    btn.disabled = true;
-    btn.textContent = "Starting…";
-    progress.hidden = false;
-
-    try {
-      const resp = await fetch("/api/v1/sd/download", { method: "POST" });
-      const data = await resp.json();
-
-      if (!data.started && data.task_id) {
-        // Already running
-        pollSdDownload(data.task_id);
-        return;
-      }
-      if (!data.started) {
-        progressText.textContent = "Error: " + (data.message || "could not start");
-        btn.disabled = false;
-        btn.textContent = "Download";
-        return;
-      }
-      pollSdDownload(data.task_id);
-    } catch (err) {
-      progressText.textContent = "Error: " + err.message;
-      btn.disabled = false;
-      btn.textContent = "Download";
-    }
-  });
-
-  function pollSdDownload(taskId) {
-    const btn = $("#sd-download-btn");
-    const progressText = $("#sd-progress-text");
-    const logEl = $("#sd-log");
-    if (sdPollTimer) clearInterval(sdPollTimer);
-
-    sdPollTimer = setInterval(async () => {
-      try {
-        const resp = await fetch(`/api/v1/sd/download/${taskId}/status`);
-        const data = await resp.json();
-
-        if (data.status === "running") {
-          progressText.textContent = `Downloading… (${data.elapsed_seconds}s)`;
-          logEl.textContent = data.log_tail || "";
-          logEl.scrollTop = logEl.scrollHeight;
-        } else if (data.status === "completed") {
-          clearInterval(sdPollTimer);
-          sdPollTimer = null;
-          progressText.textContent = "✅ Download complete!";
-          sdAvailable = true;
-          if (btn) { btn.disabled = false; btn.textContent = "Download"; }
-          if (progress) progress.hidden = true;
-          updateGenWarning();
-        } else {
-          clearInterval(sdPollTimer);
-          sdPollTimer = null;
-          progressText.textContent = `❌ Download failed (exit ${data.returncode})`;
-          logEl.textContent = data.log_tail || "";
-          btn.disabled = false;
-          btn.textContent = "Retry";
-        }
-      } catch {
-        // network blip — keep polling
-      }
-    }, 5000);
-  }
-
-  // Check SD status on page load
-  checkSdStatus();
   // Undo + Clear (paint mode)
   $("#inpaint-undo").addEventListener("click", undoMaskStroke);
   $("#inpaint-clear").addEventListener("click", clearMask);
@@ -401,12 +357,67 @@ function setRowDisabled(rowSelector, disabled, groupSelector = null) {
   }
 }
 
+function updateFilterControls() {
+  const enabled = $("#filters-enabled")?.checked;
+  const body = $("#filters-group .control-body");
+  if (!body) return;
+  body.style.opacity = "1";
+  body.style.pointerEvents = "auto";
+  const controls = [
+    "#brightness",
+    "#contrast",
+    "#saturation",
+    "#sharpness",
+    "#vignette",
+    "#sepia",
+    "#anime",
+    "input[name='anime-style']",
+    "#painting",
+    "input[name='painting-style']",
+  ];
+  controls.forEach((selector) => {
+    const input = $(selector);
+    if (!input) return;
+    input.disabled = !enabled;
+    const row = input.closest(".slider-row, .checkbox-row");
+    if (row) row.style.opacity = enabled ? "1" : "0.5";
+  });
+}
+
 function updateBlurStrengthVisibility() {
   const checked = document.querySelector("input[name='bg-mode']:checked");
   if (!checked) return;
   const remove = checked.value === "remove";
   const row = $("#blur-strength-row");
   if (row) row.style.display = remove ? "none" : "flex";
+}
+
+function isBackgroundPaintActive() {
+  const bgEnabled = $("#bg-enabled")?.checked;
+  const source = document.querySelector("input[name='bg-source']:checked")?.value || "auto";
+  // Object-removal masking owns the shared canvas when enabled.
+  return !!bgEnabled && source === "paint" && !state.mask.enabled;
+}
+
+function updateMaskCanvasVisibility() {
+  const canvas = $("#mask-canvas");
+  if (!canvas) return;
+  const visible = state.mask.enabled || isBackgroundPaintActive();
+  canvas.hidden = !visible;
+  if (visible && state.mask.imageW) setupMaskCanvas();
+}
+
+function updateBackgroundMaskControls() {
+  const paint = isBackgroundPaintActive();
+  const enabled = $("#bg-enabled")?.checked;
+  const source = document.querySelector("input[name='bg-source']:checked")?.value || "auto";
+  $("#bg-mask-controls").hidden = !paint;
+  $("#bg-mask-hint").hidden = !paint;
+  setGroupDisabled("#bg-source", !enabled);
+  // Show model dropdown only in auto mode (not paint)
+  const modelRow = $("#bg-model-row");
+  if (modelRow) modelRow.style.display = source === "auto" ? "flex" : "none";
+  updateMaskCanvasVisibility();
 }
 
 function onFileSelected(e) {
@@ -425,7 +436,7 @@ function onFileSelected(e) {
   img.onload = () => {
     state.mask.imageW = img.naturalWidth;
     state.mask.imageH = img.naturalHeight;
-    if (state.mask.enabled) setupMaskCanvas();
+    if (state.mask.enabled || isBackgroundPaintActive()) setupMaskCanvas();
   };
 
   $("#preview-container").hidden = false;
@@ -489,7 +500,7 @@ function collectSettings() {
       enabled: $("#bg-enabled").checked,
       mode: checkedRadio("bg-mode") || "blur",
       blur_strength: parseInt($("#blur-strength").value, 10),
-      model_name: "u2netp",
+      model_name: $("#bg-model")?.value || "u2netp",
     },
     grain: {
       enabled: $("#grain-enabled").checked,
@@ -509,6 +520,10 @@ function collectSettings() {
       vignette_strength: parseFloat($("#vignette").value),
       sepia: $("#sepia").checked,
       grayscale_blend: 0,
+      anime: $("#anime").checked,
+      anime_style: checkedRadio("anime-style") || "hayao",
+      painting: $("#painting").checked,
+      painting_style: checkedRadio("painting-style") || "oil",
     },
   };
 }
@@ -538,7 +553,12 @@ function applyPreset(name) {
   const bgMode = document.querySelector(`input[name='bg-mode'][value='${s.background.mode}']`);
   if (bgMode) bgMode.checked = true;
   setSlider($("#blur-strength"), s.background.blur_strength, $("#blur-value"));
+  const bgSource = document.querySelector("input[name='bg-source'][value='auto']");
+  if (bgSource) bgSource.checked = true;
+  const bgModel = $("#bg-model");
+  if (bgModel && s.background.model_name) bgModel.value = s.background.model_name;
   updateBlurStrengthVisibility();
+  updateBackgroundMaskControls();
   // Re-fire change handlers to update visual disabled states
   $("#bg-enabled").dispatchEvent(new Event("change"));
 
@@ -562,6 +582,16 @@ function applyPreset(name) {
   setSlider($("#sharpness"), s.filters.sharpness, $("#sharpness-value"), (v) => parseFloat(v).toFixed(2));
   setSlider($("#vignette"), s.filters.vignette_strength, $("#vignette-value"), (v) => parseFloat(v).toFixed(2));
   $("#sepia").checked = !!s.filters.sepia;
+  $("#anime").checked = !!s.filters.anime;
+  const animeStyle = document.querySelector(`input[name='anime-style'][value='${s.filters.anime_style || "hayao"}']`);
+  if (animeStyle) animeStyle.checked = true;
+  const animeControls = $("#anime-controls");
+  if (animeControls) animeControls.hidden = !$("#anime").checked;
+  $("#painting").checked = !!s.filters.painting;
+  const paintStyle = document.querySelector(`input[name='painting-style'][value='${s.filters.painting_style || "oil"}']`);
+  if (paintStyle) paintStyle.checked = true;
+  const paintControls = $("#painting-controls");
+  if (paintControls) paintControls.hidden = !$("#painting").checked;
   $("#filters-enabled").dispatchEvent(new Event("change"));
 }
 
@@ -688,9 +718,10 @@ function pushMaskHistory() {
 }
 
 function startMaskStroke(evt) {
-  if (!state.mask.enabled || !state.mask.ctx) return;
-  // In click mode, the click handler takes over — don't draw a paint dot
-  if (state.mask.mode === "click") {
+  const bgPaint = isBackgroundPaintActive();
+  if (!state.mask.ctx || (!state.mask.enabled && !bgPaint)) return;
+  // In click mode, object-removal click detection takes over — don't draw a paint dot.
+  if (state.mask.enabled && state.mask.mode === "click") {
     onMaskClick(evt);
     return;
   }
@@ -705,7 +736,8 @@ function startMaskStroke(evt) {
 }
 
 function continueMaskStroke(evt) {
-  if (!state.mask.drawing || !state.mask.ctx) return;
+  const bgPaint = isBackgroundPaintActive();
+  if (!state.mask.drawing || !state.mask.ctx || (!state.mask.enabled && !bgPaint)) return;
   evt.preventDefault();
   const { x, y } = getCanvasCoords(evt);
   paintMaskSegment(state.mask.lastX, state.mask.lastY, x, y);
@@ -721,12 +753,18 @@ function paintMaskSegment(x0, y0, x1, y1) {
   const ctx = state.mask.ctx;
   // Scale brush from display px to canvas px (we used dpr scale above,
   // so the context is already in display units)
-  const r = state.mask.brushSize / 2;
-  ctx.lineWidth = state.mask.brushSize;
-  // Translucent red so user can see what they're painting, but the alpha
-  // channel is high enough that the underlying pixels read as "to remove"
-  ctx.strokeStyle = "rgba(255, 60, 60, 0.85)";
-  ctx.fillStyle = "rgba(255, 60, 60, 0.85)";
+  const brushSize = isBackgroundPaintActive()
+    ? parseInt($("#bg-brush-size").value, 10)
+    : state.mask.brushSize;
+  const r = brushSize / 2;
+  ctx.lineWidth = brushSize;
+  const paintColour = isBackgroundPaintActive()
+    ? "rgba(80, 180, 255, 0.85)"
+    : "rgba(255, 60, 60, 0.85)";
+  // Translucent overlay so user can see the image, but the alpha channel is
+  // high enough that the underlying pixels read as selected in the mask PNG.
+  ctx.strokeStyle = paintColour;
+  ctx.fillStyle = paintColour;
   ctx.beginPath();
   ctx.moveTo(x0, y0);
   ctx.lineTo(x1, y1);
@@ -755,26 +793,15 @@ function undoMaskStroke() {
   state.mask.isDirty = state.mask.history.length > 0;
 }
 
-/** Returns a Promise<Blob> PNG of the mask at original image resolution.
- *  Black = keep, white = remove. */
-async function getMaskPngBlob() {
-  // In click mode, the detected mask is already a clean PNG at original size
-  if (state.mask.mode === "click" && state.mask.detectedMask) {
-    const resp = await fetch(state.mask.detectedMask);
-    return await resp.blob();
-  }
-  // Paint mode: render the display canvas (with red strokes) into a clean
-  // black/white mask at original image resolution.
-  // Do NOT pre-fill with opaque black — that would make source-in fill the
-  // entire canvas white (every pixel becomes opaque). Instead, draw the
-  // strokes on a transparent background, then convert non-transparent areas
-  // to white via source-in.
+/** Returns a Promise<Blob> PNG of the painted mask at original image resolution.
+ *  Transparent/black = keep, white = selected. */
+async function getPaintedMaskPngBlob() {
   const displayCanvas = $("#mask-canvas");
   const out = document.createElement("canvas");
   out.width = state.mask.imageW;
   out.height = state.mask.imageH;
   const octx = out.getContext("2d");
-  // Draw the painted strokes (transparent background + semi-transparent red)
+  // Draw the painted strokes (transparent background + semi-transparent overlay)
   octx.drawImage(displayCanvas, 0, 0, out.width, out.height);
   // Convert any painted pixel to opaque white; transparent stays transparent
   // (which decodes as grayscale 0 = black = keep when cv2 reads it)
@@ -785,10 +812,18 @@ async function getMaskPngBlob() {
   return new Promise((resolve) => out.toBlob(resolve, "image/png"));
 }
 
-function hasMaskContent() {
-  // Click mode: we have a mask if SAM returned one
-  if (state.mask.mode === "click") return !!state.mask.detectedMask;
-  // Paint mode: scan the canvas for any non-transparent pixel
+/** Returns a Promise<Blob> PNG of the inpaint mask at original image resolution.
+ *  Black = keep, white = remove. */
+async function getMaskPngBlob() {
+  // In click mode, the detected mask is already a clean PNG at original size
+  if (state.mask.mode === "click" && state.mask.detectedMask) {
+    const resp = await fetch(state.mask.detectedMask);
+    return await resp.blob();
+  }
+  return await getPaintedMaskPngBlob();
+}
+
+function hasPaintMaskContent() {
   if (!state.mask.ctx || !state.mask.isDirty) return false;
   const canvas = $("#mask-canvas");
   const data = state.mask.ctx.getImageData(0, 0, canvas.width, canvas.height).data;
@@ -796,6 +831,12 @@ function hasMaskContent() {
     if (data[i] > 0) return true;
   }
   return false;
+}
+
+function hasMaskContent() {
+  // Click mode: we have a mask if SAM returned one
+  if (state.mask.mode === "click") return !!state.mask.detectedMask;
+  return hasPaintMaskContent();
 }
 
 // ============================================================================
@@ -943,6 +984,24 @@ async function processImage() {
   formData.append("file", state.file);
   formData.append("settings", JSON.stringify(settings));
 
+  if (isBackgroundPaintActive()) {
+    if (!hasPaintMaskContent()) {
+      setStatus("Paint at least one background area first, or switch Background source back to Auto.", "error");
+      state.processing = false;
+      updateProcessButton();
+      return;
+    }
+    try {
+      const bgMaskBlob = await getPaintedMaskPngBlob();
+      formData.append("background_mask", bgMaskBlob, "background-mask.png");
+    } catch (err) {
+      setStatus(`Error preparing background mask: ${err.message}`, "error");
+      state.processing = false;
+      updateProcessButton();
+      return;
+    }
+  }
+
   let resp;
   try {
     resp = await fetch("/api/v1/process", { method: "POST", body: formData });
@@ -993,7 +1052,6 @@ async function processInpaint() {
   const radius = parseInt($("#inpaint-radius").value, 10);
   const iterations = parseInt($("#inpaint-iterations").value, 10);
   const algorithm = document.querySelector("input[name='inpaint-algo']:checked").value;
-  const prompt = $("#inpaint-prompt") ? $("#inpaint-prompt").value : "";
 
   let maskBlob;
   try {
@@ -1018,9 +1076,6 @@ async function processInpaint() {
   formData.append("algorithm", algorithm);
   if (algorithm === "lama") {
     formData.append("iterations", String(iterations));
-  }
-  if (algorithm === "sd" && prompt) {
-    formData.append("prompt", prompt);
   }
 
   let resp;

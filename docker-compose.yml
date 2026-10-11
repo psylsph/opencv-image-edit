@@ -9,9 +9,16 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: opencv-image-edit:1.7.1
+    image: opencv-image-edit:1.8.0
     container_name: opencv-image-edit
     restart: unless-stopped
+    # Keep image processing from starving Docker, Tailscale, or the host.
+    # These limits leave headroom for the 4-core/16 GB server.
+    # BiRefNet Tiny at 1024px exceeds 4g during inference (confirmed OOM).
+    # Retain host headroom while allowing its working-memory peak.
+    mem_limit: 8g
+    cpus: 3.0
+    pids_limit: 256
     ports:
       - "8000:8000"   # FastAPI + static PWA
       - "9090:9090"   # Prometheus metrics
@@ -23,6 +30,7 @@ services:
       MAX_IMAGE_SIZE_MB: "10"
       MAX_IMAGE_DIMENSION: "1536"
       MODEL_DIR: "/home/app/models"
+      MODEL_IDLE_TIMEOUT_SECONDS: "180"
       ENABLE_METRICS: "true"
       METRICS_PORT: "9090"
     volumes:

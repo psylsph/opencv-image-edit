@@ -32,6 +32,26 @@ MODELS: dict[str, dict] = {
         "sha256": "309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8",
         "size_mb": 4.7,
     },
+    "silueta.onnx": {
+        "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/silueta.onnx",
+        "sha256": "75da6c8d2f8096ec743d071951be73b4a8bc7b3e51d9a6625d63644f90ffeedb",
+        "size_mb": 44.0,
+    },
+    "u2net.onnx": {
+        "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx",
+        "sha256": "8d10d2f3bb75ae3b6d527c77944fc5e7dcd94b29809d47a739a7a728a912b491",
+        "size_mb": 176.0,
+    },
+    "isnet_general_use.onnx": {
+        "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/isnet-general-use.onnx",
+        "sha256": "60920e99c45464f2ba57bee2ad08c919a52bbf852739e96947fbb4358c0d964a",
+        "size_mb": 174.0,
+    },
+    "BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx": {
+        "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx",
+        "sha256": "5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333",
+        "size_mb": 213.0,
+    },
     "EDSR_x2.pb": {
         "url": "https://github.com/Saafke/EDSR_Tensorflow/raw/master/models/EDSR_x2.pb",
         "sha256": "585623221baa070279a0d1e7e113a4c3faba0f318ca7fdd9a65d9afc0763d9b4",
@@ -65,6 +85,56 @@ MODELS: dict[str, dict] = {
         "url": "https://huggingface.co/opencv/inpainting_lama/resolve/main/inpainting_lama_2025jan.onnx",
         "sha256": "7df918ac3921d3daf0aae1d219776cf0dc4e4935f035af81841b40adcf74fdf2",
         "size_mb": 88.3,
+    },
+    "AnimeGANv2_Hayao.onnx": {
+        # AnimeGANv2 Hayao style transfer — classic anime look.
+        "url": "https://huggingface.co/vumichien/AnimeGANv2_Hayao/resolve/main/AnimeGANv2_Hayao.onnx",
+        "sha256": "5a84ca468f3c4fd891fe8c883a3a507ed3e463f4f059985735f6449dae7590b5",
+        "size_mb": 8.6,
+    },
+    "AnimeGANv2_Shinkai.onnx": {
+        # AnimeGANv2 Shinkai style transfer — vivid blues.
+        "url": "https://huggingface.co/vumichien/AnimeGANv2_Shinkai/resolve/main/AnimeGANv2_Shinkai.onnx",
+        "sha256": "4b57475c2bdc71348a52e6d495abc9e346242619fdb0e519a2957c7c7885c4bb",
+        "size_mb": 8.6,
+    },
+    "AnimeGANv2_Paprika.onnx": {
+        # AnimeGANv2 Paprika style transfer — bold saturated colours.
+        "url": "https://huggingface.co/vumichien/AnimeGANv2_Paprika/resolve/main/AnimeGANv2_Paprika.onnx",
+        "sha256": "b0a00eb337092b446e6df9d92f7a5de804880b093b229baf2e9e2ba4696b01a2",
+        "size_mb": 8.6,
+    },
+    "AnimeGANv3_Hayao_36.onnx": {
+        # AnimeGANv3 Hayao — Ghibli-style, soft hand-drawn 90s look.
+        # Same I/O contract as v2 (NHWC RGB [-1,1], mult-of-8), dynamic size.
+        "url": "https://github.com/TachibanaYoshino/AnimeGANv3/releases/download/v1.1.0/AnimeGANv3_Hayao_36.onnx",
+        "sha256": "95ba7b219073fd5b12f569bc38056ffd3019cf4caf15b1feb9f73d1286c9f69d",
+        "size_mb": 4.2,
+    },
+    "AnimeGANv3_JP_face.onnx": {
+        # AnimeGANv3 JP_face — stylised anime faces, cel-shaded cartoon feel.
+        # Same I/O contract as v2 (NHWC RGB [-1,1], mult-of-8), dynamic size.
+        "url": "https://huggingface.co/vumichien/AnimeGANv3_JP_face/resolve/main/AnimeGANv3_JP_face.onnx",
+        "sha256": "1e5f85aa230c64df96278b26bf51bc75d4327156e2f8606e613fa1574d8a6fff",
+        "size_mb": 6.1,
+    },
+    "fast_neural_style_rain_princess-9.onnx": {
+        # Fast Neural Style 'Rain Princess' — oil-painting brushwork.
+        "url": "https://github.com/onnx/models/raw/main/validated/vision/style_transfer/fast_neural_style/model/rain-princess-9.onnx",
+        "sha256": "4162912e6f75fedef6f810ae989b9e10d3d5d43308dab34b027c850cf255e152",
+        "size_mb": 6.7,
+    },
+    "fast_neural_style_udnie-9.onnx": {
+        # Fast Neural Style 'Udnie' — soft modern painterly look.
+        "url": "https://github.com/onnx/models/raw/main/validated/vision/style_transfer/fast_neural_style/model/udnie-9.onnx",
+        "sha256": "8656b6ce7dec8f22ee13c2d557d6b67bd6f550dde88d0f2e7c9972aeb765cc0d",
+        "size_mb": 6.7,
+    },
+    "fast_neural_style_pointilism-9.onnx": {
+        # Fast Neural Style 'Pointillism' — dotted impressionist texture.
+        "url": "https://github.com/onnx/models/raw/main/validated/vision/style_transfer/fast_neural_style/model/pointilism-9.onnx",
+        "sha256": "5ee2b8d4d6bc60a777f54e0fe96a1b717360a004b79d56c67390d4a975b14d98",
+        "size_mb": 6.7,
     },
 }
 
@@ -248,8 +318,6 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description="Download model files")
     parser.add_argument("target_dir", nargs="?", default=None, help="target directory")
-    parser.add_argument("--base-only", action="store_true", help="skip SD models")
-    parser.add_argument("--sd-only", action="store_true", help="only download SD models")
     args = parser.parse_args()
 
     target_dir = (
@@ -297,85 +365,7 @@ def main() -> int:
             print(f"  - {name}: {err}")
         return 1
     print("All base models downloaded successfully.")
-
-    # --- SD models (optional, ~4GB) ---
-    if args.base_only:
-        print("\nSkipping SD models (--base-only)")
-        return 0
-
-    if args.sd_only:
-        print("\n--sd-only: skipping base models (already downloaded)")
-    else:
-        print()
-        print("=" * 60)
-        print("Stable Diffusion 1.5 Inpainting (optional, ~4GB)")
-        print("=" * 60)
-    download_sd_models(target_dir)
-
     return 0
-
-
-# --- Stable Diffusion model downloads ---
-
-_SD_REPO = "modularai/stable-diffusion-1.5-onnx"
-_SD_FILES = {
-    "text_encoder/model.onnx": ("text_encoder/model.onnx", 469),
-    "unet/model.onnx": ("unet/model.onnx", 1),
-    "unet/model.onnx_data": ("unet/model.onnx_data", 3278),
-    "vae_encoder/model.onnx": ("vae_encoder/model.onnx", 130),
-    "vae_decoder/model.onnx": ("vae_decoder/model.onnx", 188),
-    "tokenizer/vocab.json": ("tokenizer/vocab.json", 1),
-    "tokenizer/merges.txt": ("tokenizer/merges.txt", 1),
-    "tokenizer/tokenizer_config.json": ("tokenizer/tokenizer_config.json", 1),
-    "tokenizer/special_tokens_map.json": ("tokenizer/special_tokens_map.json", 1),
-}
-
-
-def download_sd_models(target_dir: Path) -> None:
-    """Download SD 1.5 ONNX models (~4GB). Optional — LaMa is the default."""
-    sd_dir = target_dir / "sd-inpainting"
-
-    # Check if already downloaded
-    unet_data = sd_dir / "unet" / "model.onnx_data"
-    if unet_data.exists() and unet_data.stat().st_size > 1_000_000_000:
-        print("  SD models already present.")
-        return
-
-    print(f"  Downloading to: {sd_dir}")
-    print(f"  Source: {_SD_REPO}")
-    print("  Total: ~4GB (this will take several minutes)")
-    print()
-
-    base_url = f"https://huggingface.co/{_SD_REPO}/resolve/main"
-    for subdir_path, (repo_path, size_mb) in _SD_FILES.items():
-        dest = sd_dir / subdir_path
-        dest.parent.mkdir(parents=True, exist_ok=True)
-
-        expected_bytes = size_mb * 1024 * 1024
-        if dest.exists():
-            have = dest.stat().st_size
-            # Large files (>5 MB) are only trusted once they're >=90% of the
-            # expected size — a partial 3 GB ``model.onnx_data`` used to be
-            # silently skipped as "already present". Small files (tokenizer
-            # config, the small UNet graph) just need to be non-trivially
-            # present; their ``size_mb`` entries are approximate.
-            big = expected_bytes > 5 * 1024 * 1024
-            complete = (have >= 0.9 * expected_bytes) if big else (have > 100)
-            if complete:
-                print(f"  [{subdir_path}] already present ({have / 1024 / 1024:.0f} MB)")
-                continue
-            print(
-                f"  [{subdir_path}] partial ({have / 1024 / 1024:.1f} MB of "
-                f"~{size_mb} MB) — re-downloading from scratch"
-            )
-            dest.unlink()
-
-        print(f"  [{subdir_path}] downloading (~{size_mb} MB)...")
-        _download(f"{base_url}/{repo_path}", dest)
-        print(f"  [{subdir_path}] OK")
-
-    print()
-    print("  SD models downloaded successfully.")
 
 
 if __name__ == "__main__":

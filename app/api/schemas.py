@@ -11,7 +11,7 @@ class BackgroundRequest(BaseModel):
     enabled: bool = False
     mode: Literal["blur", "remove"] = "blur"
     blur_strength: int = Field(default=15, ge=1, le=50)
-    model_name: str = "u2netp"
+    model_name: str = "birefnet_tiny"
 
 
 class GrainRequest(BaseModel):
@@ -34,6 +34,10 @@ class FiltersRequest(BaseModel):
     vignette_strength: float = Field(default=0.0, ge=0.0, le=1.0)
     sepia: bool = False
     grayscale_blend: float = Field(default=0.0, ge=0.0, le=1.0)
+    anime: bool = False
+    anime_style: Literal["hayao", "shinkai", "paprika", "hayao3", "jp_face"] = "hayao"
+    painting: bool = False
+    painting_style: Literal["oil", "painterly", "pointillism"] = "oil"
 
 
 class ProcessRequest(BaseModel):

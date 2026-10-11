@@ -60,6 +60,29 @@
             <label><input type="radio" name="bg-mode" value="blur" checked /><span>Blur</span></label>
             <label><input type="radio" name="bg-mode" value="remove" /><span>Remove</span></label>
           </fieldset>
+          <fieldset class="segmented" id="bg-source">
+            <legend class="sr-only">Background selection</legend>
+            <label><input type="radio" name="bg-source" value="auto" checked /><span>Auto</span></label>
+            <label><input type="radio" name="bg-source" value="paint" /><span>Paint BG</span></label>
+          </fieldset>
+          <div id="bg-model-row" class="select-row">
+            <label for="bg-model">Model</label>
+            <select id="bg-model" disabled>
+              <option value="birefnet_tiny" selected>BiRefNet Tiny (best quality)</option>
+              <option value="u2netp">U2NetP (fast)</option>
+            </select>
+          </div>
+          <p class="control-hint" id="bg-mask-hint" hidden>Drag over areas that should be treated as background.</p>
+          <div id="bg-mask-controls" hidden>
+            <label class="slider-row">
+              <span>Brush size <output id="bg-brush-value">32</output></span>
+              <input type="range" id="bg-brush-size" min="5" max="100" step="1" value="32" />
+            </label>
+            <div class="inpaint-buttons">
+              <button id="bg-mask-undo" class="btn btn-secondary" type="button">↶ Undo</button>
+              <button id="bg-mask-clear" class="btn btn-secondary" type="button">🗑️ Clear</button>
+            </div>
+          </div>
           <label class="slider-row" id="blur-strength-row">
             <span>Blur strength <output id="blur-value">15</output></span>
             <input type="range" id="blur-strength" min="1" max="50" value="15" />
@@ -145,6 +168,34 @@
             <input type="checkbox" id="sepia" />
             <span>Sepia tone</span>
           </label>
+          <label class="checkbox-row">
+            <input type="checkbox" id="anime" />
+            <span>Anime style</span>
+          </label>
+          <div id="anime-controls" hidden>
+            <fieldset class="segmented" id="anime-style">
+              <legend class="sr-only">Anime style</legend>
+              <label><input type="radio" name="anime-style" value="hayao" checked /><span>Hayao</span></label>
+              <label><input type="radio" name="anime-style" value="shinkai" /><span>Shinkai</span></label>
+              <label><input type="radio" name="anime-style" value="paprika" /><span>Paprika</span></label>
+              <label><input type="radio" name="anime-style" value="hayao3" /><span>Hayao v3</span></label>
+              <label><input type="radio" name="anime-style" value="jp_face" /><span>JP Face</span></label>
+            </fieldset>
+            <p class="control-hint">AI style transfer · Hayao: classic anime, Shinkai: vivid blues, Paprika: bold colours, Hayao v3: soft Ghibli, JP Face: cel-shaded cartoon</p>
+          </div>
+          <label class="checkbox-row">
+            <input type="checkbox" id="painting" />
+            <span>Painting style</span>
+          </label>
+          <div id="painting-controls" hidden>
+            <fieldset class="segmented" id="painting-style">
+              <legend class="sr-only">Painting style</legend>
+              <label><input type="radio" name="painting-style" value="oil" checked /><span>Oil</span></label>
+              <label><input type="radio" name="painting-style" value="painterly" /><span>Painterly</span></label>
+              <label><input type="radio" name="painting-style" value="pointillism" /><span>Pointillist</span></label>
+            </fieldset>
+            <p class="control-hint">AI style transfer · Oil: rich brushwork, Painterly: soft modern, Pointillist: impressionist dots</p>
+          </div>
         </div>
       </details>
 
@@ -237,28 +288,13 @@
           <fieldset class="segmented" id="inpaint-algo">
             <legend class="sr-only">Inpainting algorithm</legend>
             <label><input type="radio" name="inpaint-algo" value="lama" checked /><span>AI</span></label>
-            <label><input type="radio" name="inpaint-algo" value="sd" /><span>🎨 Gen</span></label>
             <label><input type="radio" name="inpaint-algo" value="ns" /><span>Smooth</span></label>
             <label><input type="radio" name="inpaint-algo" value="telea" /><span>Fast</span></label>
           </fieldset>
           <label class="slider-row" id="inpaint-iterations-row">
             <span>AI quality <output id="inpaint-iterations-value">2 passes</output></span>
-            <input type="range" id="inpaint-iterations" min="1" max="10" step="1" value="2" />
+            <input type="range" id="inpaint-iterations" min="1" max="20" step="1" value="2" />
           </label>
-          <label class="slider-row" id="inpaint-prompt-row" style="display:none">
-            <span>Prompt</span>
-            <input type="text" id="inpaint-prompt" placeholder="e.g. green leaves and branches" />
-          </label>
-          <div id="gen-warning" hidden>
-            <div class="gen-warning-box" id="gen-warning-box">
-              <p id="gen-warning-text">🎨 SD models not downloaded (~4GB).</p>
-              <button id="sd-download-btn" class="btn btn-primary" type="button">Download</button>
-            </div>
-            <div id="sd-progress" hidden>
-              <p id="sd-progress-text">Downloading…</p>
-              <pre id="sd-log" class="sd-log"></pre>
-            </div>
-          </div>
           <label class="slider-row" id="inpaint-radius-row">
             <span>Fill radius <output id="inpaint-radius-value">3</output></span>
             <input type="range" id="inpaint-radius" min="1" max="20" step="1" value="3" />
@@ -322,6 +358,6 @@
     </footer>
   </main>
 
-  <script type="module" src="app.js?v=19"></script>
+  <script type="module" src="app.js?v=27"></script>
 </body>
 </html>

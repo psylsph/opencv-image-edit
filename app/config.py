@@ -33,8 +33,9 @@ class Settings(BaseSettings):
     max_image_size_mb: int = Field(default=10, gt=0, le=100)
     max_image_dimension: int = Field(default=1536, gt=64, le=8192)
 
-    # Model paths
+    # Model paths and lifecycle
     model_dir: Path = Path("./models")
+    model_idle_timeout_seconds: int = Field(default=180, ge=1, le=3600)
 
     # Metrics
     enable_metrics: bool = True
@@ -45,7 +46,7 @@ class Settings(BaseSettings):
     grain_intensity_max: float = Field(default=1.0, gt=0.0, le=2.0)
 
     # App metadata
-    app_version: str = "1.7.1"
+    app_version: str = "1.8.0"
     app_name: str = "opencv-image-edit"
 
     @field_validator("log_level")

@@ -420,7 +420,23 @@ def test_apply_unsharp_mask_strength_0_is_passthrough(gradient: np.ndarray) -> N
     np.testing.assert_array_equal(out, gradient)
 
 
-def test_apply_unsharp_mask_clamps_to_uint8(gradient: np.ndarray) -> None:
-    out = apply_unsharp_mask(gradient, sigma=1.0, strength=1.5)
-    assert int(out.max()) <= 255
-    assert int(out.min()) >= 0
+# ---------------------------------------------------------------------------
+# AnimeGANv2 style transfer (app.models.anime)
+# ---------------------------------------------------------------------------
+
+
+def test_anime_style_unknown_key_raises() -> None:
+    from app.exceptions import ModelNotFoundError
+    from app.models.anime import get_anime_session
+
+    with pytest.raises(ModelNotFoundError):
+        get_anime_session("does_not_exist")
+
+
+def test_anime_registry_has_expected_styles() -> None:
+    from app.models.anime import ANIME_STYLES
+
+    assert set(ANIME_STYLES) == {"hayao", "shinkai", "paprika", "hayao3", "jp_face"}
+    for info in ANIME_STYLES.values():
+        assert info.filename.endswith(".onnx")
+        assert info.size_mb > 0

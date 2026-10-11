@@ -209,6 +209,53 @@ def test_matting_model_predict_signature_exists():
     assert hasattr(MattingModel, "predict")
 
 
+# ---------------------------------------------------------------------------
+# Model registry
+# ---------------------------------------------------------------------------
+
+
+def test_matting_registry_has_expected_models():
+    """All four expected model variants are registered."""
+    from app.models.matting import MATTING_MODELS
+
+    keys = set(MATTING_MODELS.keys())
+    assert keys == {"u2netp", "silueta", "u2net", "isnet", "birefnet_tiny"}
+
+
+def test_matting_registry_entries_have_metadata():
+    """Each registry entry has filename, input_size, and display info."""
+    from app.models.matting import MATTING_MODELS
+
+    for key, info in MATTING_MODELS.items():
+        assert info.filename.endswith(".onnx"), f"{key}: filename must be .onnx"
+        assert info.input_size >= 320, f"{key}: input_size too small"
+        assert len(info.display_name) > 0, f"{key}: empty display_name"
+        assert len(info.description) > 0, f"{key}: empty description"
+
+
+def test_get_matting_model_rejects_unknown_name():
+    """Requesting an unregistered model raises ModelNotFoundError."""
+    from app.exceptions import ModelNotFoundError
+    from app.models.matting import get_matting_model
+
+    with pytest.raises(ModelNotFoundError):
+        get_matting_model("nonexistent_model")
+
+
+def test_available_models_returns_list():
+    """available_models() returns a list of dicts with required fields."""
+    from app.models.matting import available_models
+
+    models = available_models()
+    assert isinstance(models, list)
+    assert len(models) >= 4
+    for m in models:
+        assert "key" in m
+        assert "display_name" in m
+        assert "available" in m
+        assert "size_mb" in m
+
+
 @pytest.mark.slow
 def test_matting_model_predicts_real_foreground():
     """End-to-end: real U2NetP ONNX should separate a drawn person from background.
@@ -230,7 +277,7 @@ def test_matting_model_predicts_real_foreground():
     img[:, :] = (80, 120, 100)  # BGR
     cv2.ellipse(img, (300, 200), (80, 120), 0, 0, 360, (180, 160, 200), -1)
 
-    model = MattingModel(model_path)
+    model = MattingModel(model_path, input_size=320)
     mask = model.predict(img)
 
     # Mask must be properly bimodal (not stuck around 0.5)

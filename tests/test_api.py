@@ -61,11 +61,12 @@ class TestHealthEndpoint:
         assert isinstance(models, dict)
         # The matting model key is always reported
         assert "matting" in models
-        # The status is one of "loaded" or "missing: <ErrorClass>"
+        # Health checks report file availability without loading model sessions.
         for key, status in models.items():
-            assert status == "loaded" or status.startswith("missing:"), (
+            assert status == "available" or status.startswith("missing:"), (
                 f"unexpected status for {key!r}: {status!r}"
             )
+        assert body["model_idle_timeout_seconds"] == 180
 
     def test_health_includes_upscale_models(self, test_client: TestClient):
         response = test_client.get("/health")
@@ -388,6 +389,37 @@ class TestProcessEndpoint:
         # 100x100 → 200x200
         assert body["output_size"]["width"] == 200
         assert body["output_size"]["height"] == 200
+
+    def test_process_accepts_manual_background_mask(
+        self, test_client: TestClient, sample_png_bytes: bytes
+    ):
+        settings = json.dumps(
+            {
+                "background": {
+                    "enabled": True,
+                    "mode": "remove",
+                    "blur_strength": 15,
+                }
+            }
+        )
+        mask = np.zeros((100, 100), dtype=np.uint8)
+        mask[20:60, 10:50] = 255
+        ok, buf = cv2.imencode(".png", mask)
+        assert ok
+
+        response = test_client.post(
+            "/api/v1/process",
+            files={
+                "file": ("test.png", sample_png_bytes, "image/png"),
+                "background_mask": ("background-mask.png", bytes(buf), "image/png"),
+            },
+            data={"settings": settings},
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["final"].startswith("data:image/png;base64,")
+        assert body["mask"].startswith("data:image/png;base64,")
 
 
 # ===========================================================================

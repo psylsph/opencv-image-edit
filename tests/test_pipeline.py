@@ -151,6 +151,41 @@ def test_pipeline_background_remove_returns_bgra():
     assert result.final.dtype == np.uint8
 
 
+def test_pipeline_manual_background_mask_blurs_painted_area_without_model():
+    """Painted background mask bypasses AI matting and marks painted pixels as BG."""
+    img = _bgr(80, 50)
+    bg_mask = np.zeros(img.shape[:2], dtype=np.uint8)
+    bg_mask[:, :30] = 255  # user highlighted the left side as background
+    request = ProcessRequest(
+        background=BackgroundRequest(enabled=True, mode="blur", blur_strength=12)
+    )
+
+    result = process_pipeline(img, request, background_mask=bg_mask)
+
+    assert result.final.shape == img.shape
+    assert result.mask is not None
+    # Debug mask is foreground alpha: painted background becomes black.
+    assert result.mask[:, :30].mean() < 5
+    assert result.mask[:, 35:].mean() > 250
+    # Foreground/right side remains sharp/original because alpha=1 there.
+    assert np.array_equal(result.final[:, 35:], img[:, 35:])
+
+
+def test_pipeline_manual_background_remove_makes_painted_area_transparent():
+    """Manual background paint can drive background removal alpha directly."""
+    img = _bgr(40, 30)
+    bg_mask = np.zeros(img.shape[:2], dtype=np.uint8)
+    bg_mask[5:20, 10:25] = 255
+    request = ProcessRequest(background=BackgroundRequest(enabled=True, mode="remove"))
+
+    result = process_pipeline(img, request, background_mask=bg_mask)
+
+    assert result.final.shape == img.shape[:2] + (4,)
+    alpha = result.final[:, :, 3]
+    assert alpha[8:17, 13:22].max() < 10
+    assert alpha[:4, :4].min() > 245
+
+
 # ---------------------------------------------------------------------------
 # Grain stage
 # ---------------------------------------------------------------------------
@@ -303,7 +338,7 @@ def test_pipeline_background_request_default_factory():
     bg = BackgroundRequest()
     assert bg.mode == "blur"
     assert bg.blur_strength == 15
-    assert bg.model_name == "u2netp"
+    assert bg.model_name == "birefnet_tiny"
 
 
 def test_pipeline_upscale_request_default_factory():
@@ -375,7 +410,7 @@ def test_pipeline_missing_matting_model_propagates_error():
     """
     from app.models import matting
 
-    saved_singleton = matting._singleton
+    saved_cache = matting._cache
     orig_getter = matting.get_matting_model
     try:
 
@@ -402,4 +437,4 @@ def test_pipeline_missing_matting_model_propagates_error():
             matting.get_matting_model = orig_getter  # type: ignore[assignment]
             importlib.reload(orch)
     finally:
-        matting._singleton = saved_singleton
+        matting._cache = saved_cache
