@@ -135,6 +135,10 @@ function bindEvents() {
   // Process button
   $("#process-btn").addEventListener("click", processImage);
 
+  // "On" badges follow the enable checkboxes (programmatic changes call it too)
+  $(".controls-section").addEventListener("change", syncGroupBadges);
+  syncGroupBadges();
+
   // Reset button
   $("#reset-btn").addEventListener("click", () => applyPreset(null));
 
@@ -234,6 +238,9 @@ function bindEvents() {
       }
       updateMaskCanvasVisibility();
       updateBackgroundMaskControls();
+      if (e.target.checked && state.file) {
+        $("#preview-container").scrollIntoView({ behavior: "smooth", block: "start" });
+      }
     });
     // Mode switcher (Click vs Paint)
     $$(`input[name='${owner}-mode']`).forEach((r) => {
@@ -340,6 +347,18 @@ function bindEvents() {
   });
 }
 
+/** Mirror each group's "Enable" checkbox onto the <details> so collapsed groups show "On". */
+function syncGroupBadges() {
+  for (const [cb, group] of [
+    ["#bg-enabled", "#bg-group"], ["#blur-enabled", "#blur-group"],
+    ["#inpaint-enabled", "#inpaint-group"], ["#grain-enabled", "#grain-group"],
+    ["#upscale-enabled", "#upscale-group"], ["#filters-enabled", "#filters-group"],
+  ]) {
+    const g = $(group);
+    if (g) g.dataset.on = String(!!$(cb)?.checked);
+  }
+}
+
 function setGroupDisabled(selector, disabled) {
   const el = $(selector);
   if (!el) return;
@@ -404,6 +423,8 @@ function updateMaskCanvasVisibility() {
   if (!canvas) return;
   const visible = state.mask.enabled || isBackgroundPaintActive();
   canvas.hidden = !visible;
+  // Click mode lets the page scroll under the finger; paint modes capture it.
+  canvas.dataset.mode = state.mask.enabled ? state.mask.mode : "paint";
   if (visible && state.mask.imageW) setupMaskCanvas();
 }
 
@@ -593,6 +614,7 @@ function applyPreset(name) {
   const paintControls = $("#painting-controls");
   if (paintControls) paintControls.hidden = !$("#painting").checked;
   $("#filters-enabled").dispatchEvent(new Event("change"));
+  syncGroupBadges();
 }
 
 function setStatus(msg, kind = "") {
@@ -938,6 +960,7 @@ function onMaskClick(evt) {
 // Mode switcher
 function setMaskMode(mode) {
   state.mask.mode = mode;
+  $("#mask-canvas").dataset.mode = mode;
   clearClickSelection();
   // Reset paint history
   state.mask.history = [];
