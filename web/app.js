@@ -60,6 +60,7 @@ const DEFAULT_SETTINGS = {
 
 // --- Init ---
 async function init() {
+  document.body.dataset.view = "edit";
   await loadPresets();
   renderPresetPills();
   bindEvents();
@@ -135,6 +136,12 @@ function bindEvents() {
   // Process button
   $("#process-btn").addEventListener("click", processImage);
 
+  // Rotate / flip the photo itself so selections and every endpoint stay in sync
+  $("#rot-ccw").addEventListener("click", () => transformImage("ccw"));
+  $("#rot-cw").addEventListener("click", () => transformImage("cw"));
+  $("#flip-h").addEventListener("click", () => transformImage("flipH"));
+  $("#flip-v").addEventListener("click", () => transformImage("flipV"));
+
   // "On" badges follow the enable checkboxes (programmatic changes call it too)
   $(".controls-section").addEventListener("change", syncGroupBadges);
   syncGroupBadges();
@@ -158,13 +165,6 @@ function bindEvents() {
   $$("input[name='bg-source']").forEach((r) => {
     r.addEventListener("change", updateBackgroundMaskControls);
   });
-  $("#bg-brush-size").addEventListener("input", (e) => {
-    state.mask.brushSize = parseInt(e.target.value, 10);
-    $("#bg-brush-value").textContent = state.mask.brushSize;
-  });
-  $("#bg-mask-undo").addEventListener("click", undoMaskStroke);
-  $("#bg-mask-clear").addEventListener("click", clearMask);
-
   // Grain enabled toggle
   $("#grain-enabled").addEventListener("change", (e) => {
     setRowDisabled("#grain-intensity", !e.target.checked, "#grain-group");
@@ -209,32 +209,22 @@ function bindEvents() {
     });
   });
 
-  // Inpaint (object removal) and Blur Area share one selection canvas (also used
-  // by Background "Paint BG"); only one of the two selection groups owns it.
+  // Inpaint (object removal) and Blur Area share one selection canvas + toolbar
+  // (also used by Background "Paint BG"); only one of the two groups owns it.
   for (const owner of ["inpaint", "blur"]) {
     const other = owner === "inpaint" ? "blur" : "inpaint";
     $(`#${owner}-enabled`).addEventListener("change", (e) => {
+      const group = $(`#${owner}-group`);
       if (e.target.checked) {
         $(`#${other}-enabled`).checked = false;
         clearClickSelection();
         state.mask.owner = owner;
         state.mask.enabled = true;
-        // restore this group's mode (click/paint) on the shared canvas
-        setMaskMode(document.querySelector(`input[name='${owner}-mode']:checked`).value);
+        setMaskMode(state.mask.mode);
+        group.open = true;
       } else if (state.mask.owner === owner) {
         state.mask.enabled = false;
-        if (isBackgroundPaintActive()) {
-          // Keep any painted background mask; just drop the click selection.
-          state.mask.detectedMask = null;
-          state.mask.detectionScore = 0;
-          for (const o of ["inpaint", "blur"]) {
-            $(`#${o}-click-actions`).hidden = true;
-            $(`#${o}-click-status`).hidden = true;
-            $(`#${o}-click-status`).textContent = "";
-          }
-        } else {
-          clearClickSelection();
-        }
+        clearClickSelection(isBackgroundPaintActive());
       }
       updateMaskCanvasVisibility();
       updateBackgroundMaskControls();
@@ -242,32 +232,45 @@ function bindEvents() {
         $("#preview-container").scrollIntoView({ behavior: "smooth", block: "start" });
       }
     });
-    // Mode switcher (Click vs Paint)
-    $$(`input[name='${owner}-mode']`).forEach((r) => {
-      r.addEventListener("change", (e) => setMaskMode(e.target.value));
-    });
   }
-  // Blur Area controls
-  $("#blur-brush-size").addEventListener("input", (e) => {
-    state.mask.brushSize = parseInt(e.target.value, 10);
-    $("#blur-brush-value").textContent = state.mask.brushSize;
-  });
   $("#blur-area-strength").addEventListener("input", (e) => {
     $("#blur-area-value").textContent = e.target.value;
   });
-  $("#blur-undo").addEventListener("click", undoMaskStroke);
-  $("#blur-clear").addEventListener("click", clearMask);
-  $("#blur-retry").addEventListener("click", () => {
-    clearClickSelection();
-    $("#blur-click-status").hidden = false;
-    $("#blur-click-status").textContent = "Tap another point to try again.";
+  // Shared selection toolbar
+  $$("input[name='sel-mode']").forEach((r) => {
+    r.addEventListener("change", (e) => {
+      setMaskMode(e.target.value);
+      updateMaskCanvasVisibility();
+    });
   });
-  $("#blur-cancel").addEventListener("click", clearClickSelection);
-  $("#blur-apply").addEventListener("click", processImage);
-  // Brush size live update
-  $("#brush-size").addEventListener("input", (e) => {
+  $("#sel-brush-size").addEventListener("input", (e) => {
     state.mask.brushSize = parseInt(e.target.value, 10);
-    $("#brush-value").textContent = state.mask.brushSize;
+    $("#sel-brush-value").textContent = state.mask.brushSize;
+  });
+  $("#sel-undo").addEventListener("click", undoMaskStroke);
+  $("#sel-clear").addEventListener("click", () => {
+    clearMask();
+    clearClickSelection();
+    updateMaskCanvasVisibility();
+  });
+
+  // Accordion: only one control group open at a time (keeps the page short)
+  $$(".controls-section details.control-group").forEach((d) => {
+    d.addEventListener("toggle", () => {
+      if (!d.open) return;
+      $$(".controls-section details.control-group").forEach((o) => { if (o !== d) o.open = false; });
+    });
+  });
+
+  // Bottom nav: Edit | Process | Result
+  $("#nav-edit").addEventListener("click", () => setView("edit"));
+  $("#nav-result").addEventListener("click", () => setView("result"));
+  $("#tabs-more").addEventListener("click", () => {
+    const tabs = $("#output-tabs");
+    const more = tabs.dataset.more !== "true";
+    tabs.dataset.more = String(more);
+    $("#tabs-more").textContent = more ? "Less ▴" : "More ▾";
+    $("#tabs-more").setAttribute("aria-expanded", String(more));
   });
   // Fill radius output update
   $("#inpaint-radius").addEventListener("input", (e) => {
@@ -295,23 +298,6 @@ function bindEvents() {
   });
   updateInpaintRadiusVisibility();
 
-  // Undo + Clear (paint mode)
-  $("#inpaint-undo").addEventListener("click", undoMaskStroke);
-  $("#inpaint-clear").addEventListener("click", clearMask);
-  // Click-mode actions
-  $("#inpaint-accept").addEventListener("click", () => {
-    // Hand off to processInpaint by setting a flag, then triggering processImage
-    processImage();
-  });
-  $("#inpaint-retry").addEventListener("click", () => {
-    clearClickSelection();
-    $("#inpaint-click-status").hidden = false;
-    $("#inpaint-click-status").textContent = "Tap another point to try again.";
-  });
-  $("#inpaint-cancel").addEventListener("click", () => {
-    clearClickSelection();
-  });
-
   // Canvas pointer events for painting
   const canvas = $("#mask-canvas");
   canvas.addEventListener("pointerdown", startMaskStroke);
@@ -337,11 +323,11 @@ function bindEvents() {
   });
 
   // Output tabs
-  $$(".output-tabs .tab").forEach((tab) => {
+  $$(".output-tabs .tab[data-tab]").forEach((tab) => {
     tab.addEventListener("click", () => {
       if (tab.disabled) return;
       const name = tab.dataset.tab;
-      $$(".output-tabs .tab").forEach((t) => t.classList.toggle("active", t === tab));
+      $$(".output-tabs .tab[data-tab]").forEach((t) => t.classList.toggle("active", t === tab));
       $$(".output-pane").forEach((p) => p.classList.toggle("active", p.dataset.pane === name));
     });
   });
@@ -390,7 +376,7 @@ function updateFilterControls() {
     "#vignette",
     "#sepia",
     "#anime",
-    "input[name='anime-style']",
+    "#anime-style",
     "#painting",
     "input[name='painting-style']",
   ];
@@ -418,22 +404,51 @@ function isBackgroundPaintActive() {
   return !!bgEnabled && source === "paint" && !state.mask.enabled;
 }
 
+/** Which selection tool currently owns the photo canvas: "inpaint" | "blur" | "bg" | null. */
+function activeTool() {
+  if (state.mask.enabled) return state.mask.owner;
+  return isBackgroundPaintActive() ? "bg" : null;
+}
+
+const TOOL_LABELS = {
+  inpaint: { title: "✂️ Remove object", verb: "remove" },
+  blur: { title: "💧 Blur area", verb: "blur" },
+  bg: { title: "🌫️ Paint the background", verb: "treat as background" },
+};
+
 function updateMaskCanvasVisibility() {
   const canvas = $("#mask-canvas");
   if (!canvas) return;
-  const visible = state.mask.enabled || isBackgroundPaintActive();
+  const tool = activeTool();
+  const visible = !!tool;
   canvas.hidden = !visible;
+  const mode = tool === "bg" ? "paint" : state.mask.mode;
   // Click mode lets the page scroll under the finger; paint modes capture it.
-  canvas.dataset.mode = state.mask.enabled ? state.mask.mode : "paint";
+  canvas.dataset.mode = mode;
   if (visible && state.mask.imageW) setupMaskCanvas();
+
+  // Shared toolbar
+  const bar = $("#select-toolbar");
+  bar.hidden = !visible;
+  if (visible) {
+    const { title, verb } = TOOL_LABELS[tool];
+    $("#sel-title").textContent = title;
+    $("#sel-mode").hidden = tool === "bg";
+    $("#sel-paint-controls").hidden = mode !== "paint";
+    $("#sel-undo").hidden = mode !== "paint";
+    if (!state.mask.detectedMask || mode !== "click") {
+      $("#sel-hint").textContent = mode === "click"
+        ? `Tap an object to select it, then press the button below to ${verb} it.`
+        : `Drag over the area to ${verb}.`;
+    }
+  }
+  updateProcessButton();
 }
 
 function updateBackgroundMaskControls() {
   const paint = isBackgroundPaintActive();
   const enabled = $("#bg-enabled")?.checked;
   const source = document.querySelector("input[name='bg-source']:checked")?.value || "auto";
-  $("#bg-mask-controls").hidden = !paint;
-  $("#bg-mask-hint").hidden = !paint;
   setGroupDisabled("#bg-source", !enabled);
   // Show model dropdown only in auto mode (not paint)
   const modelRow = $("#bg-model-row");
@@ -444,7 +459,10 @@ function updateBackgroundMaskControls() {
 function onFileSelected(e) {
   const file = e.target.files && e.target.files[0];
   if (!file) return;
+  loadFile(file);
+}
 
+function loadFile(file) {
   // Revoke previous preview URL
   if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
 
@@ -464,17 +482,55 @@ function onFileSelected(e) {
   $("#upload-btn").hidden = true;
 
   // Reset mask on new file
+  clearClickSelection();
   if (state.mask.ctx) clearMask();
   state.mask.history = [];
   state.mask.isDirty = false;
 
   // Clear previous output when a new file is chosen
   $("#output-section").hidden = true;
+  setResultAvailable(false);
   setStatus("");
   state.lastResult = null;
   state.inpaintResult = null;
 
   updateProcessButton();
+}
+
+/** Rotate/flip the uploaded photo and swap it in as the working file. */
+async function transformImage(op) {
+  if (!state.file || state.processing) return;
+  let bmp;
+  try {
+    bmp = await createImageBitmap(state.file);  // honours EXIF orientation
+  } catch (err) {
+    setStatus("This browser can't decode that image for rotating.", "error");
+    return;
+  }
+  const w = bmp.width, h = bmp.height;
+  const swap = op === "cw" || op === "ccw";
+  const canvas = document.createElement("canvas");
+  canvas.width = swap ? h : w;
+  canvas.height = swap ? w : h;
+  const ctx = canvas.getContext("2d");
+  if (op === "cw") { ctx.translate(h, 0); ctx.rotate(Math.PI / 2); }
+  else if (op === "ccw") { ctx.translate(0, w); ctx.rotate(-Math.PI / 2); }
+  else if (op === "flipH") { ctx.translate(w, 0); ctx.scale(-1, 1); }
+  else if (op === "flipV") { ctx.translate(0, h); ctx.scale(1, -1); }
+  ctx.drawImage(bmp, 0, 0);
+  bmp.close?.();
+
+  // Keep PNG/alpha formats lossless; photos go back out as high-quality JPEG
+  // so the result stays under the upload size limit.
+  const keepPng = state.file.type === "image/png" || state.file.type === "image/webp";
+  const toBlob = (type, q) => new Promise((res) => canvas.toBlob(res, type, q));
+  let blob = keepPng ? await toBlob("image/png") : await toBlob("image/jpeg", 0.95);
+  if (blob && blob.size > 9.5 * 1024 * 1024) blob = await toBlob("image/jpeg", 0.9);
+  if (!blob) { setStatus("Could not rotate the image.", "error"); return; }
+
+  const ext = blob.type === "image/png" ? "png" : "jpg";
+  const base = (state.file.name || "photo").replace(/\.[^.]+$/, "");
+  loadFile(new File([blob], `${base}.${ext}`, { type: blob.type }));
 }
 
 function clearFile() {
@@ -488,6 +544,7 @@ function clearFile() {
   $("#preview-container").hidden = true;
   $("#upload-btn").hidden = false;
   $("#output-section").hidden = true;
+  setResultAvailable(false);
   setStatus("");
   state.lastResult = null;
   state.inpaintResult = null;
@@ -507,7 +564,8 @@ function updateProcessButton() {
   if (state.processing) {
     btn.textContent = "⏳ Processing…";
   } else {
-    btn.textContent = "🚀 Process Image";
+    const tool = activeTool();
+    btn.textContent = tool === "blur" ? "💧 Apply blur" : tool === "inpaint" ? "✂️ Remove object" : "🚀 Process";
   }
 }
 
@@ -542,7 +600,7 @@ function collectSettings() {
       sepia: $("#sepia").checked,
       grayscale_blend: 0,
       anime: $("#anime").checked,
-      anime_style: checkedRadio("anime-style") || "hayao",
+      anime_style: $("#anime-style").value || "hayao",
       painting: $("#painting").checked,
       painting_style: checkedRadio("painting-style") || "oil",
     },
@@ -604,8 +662,7 @@ function applyPreset(name) {
   setSlider($("#vignette"), s.filters.vignette_strength, $("#vignette-value"), (v) => parseFloat(v).toFixed(2));
   $("#sepia").checked = !!s.filters.sepia;
   $("#anime").checked = !!s.filters.anime;
-  const animeStyle = document.querySelector(`input[name='anime-style'][value='${s.filters.anime_style || "hayao"}']`);
-  if (animeStyle) animeStyle.checked = true;
+  $("#anime-style").value = s.filters.anime_style || "hayao";
   const animeControls = $("#anime-controls");
   if (animeControls) animeControls.hidden = !$("#anime").checked;
   $("#painting").checked = !!s.filters.painting;
@@ -617,10 +674,29 @@ function applyPreset(name) {
   syncGroupBadges();
 }
 
+let statusTimer = null;
 function setStatus(msg, kind = "") {
   const sb = $("#status-bar");
   sb.textContent = msg;
   sb.className = "status-bar" + (kind ? ` ${kind}` : "");
+  clearTimeout(statusTimer);
+  // Success toasts fade out; errors and progress stay until replaced.
+  if (kind === "success" && msg) statusTimer = setTimeout(() => setStatus(""), 4000);
+}
+
+/** Switch between the Edit view (photo + controls) and the Result view. */
+function setView(view) {
+  if (view === "result" && $("#nav-result").disabled) return;
+  document.body.dataset.view = view;
+  $("#nav-edit").classList.toggle("active", view === "edit");
+  $("#nav-result").classList.toggle("active", view === "result");
+  $("#nav-edit").toggleAttribute("aria-current", view === "edit");
+  window.scrollTo({ top: 0 });
+}
+
+function setResultAvailable(on) {
+  $("#nav-result").disabled = !on;
+  if (!on) setView("edit");
 }
 
 // ============================================================================
@@ -775,9 +851,7 @@ function paintMaskSegment(x0, y0, x1, y1) {
   const ctx = state.mask.ctx;
   // Scale brush from display px to canvas px (we used dpr scale above,
   // so the context is already in display units)
-  const brushSize = isBackgroundPaintActive()
-    ? parseInt($("#bg-brush-size").value, 10)
-    : state.mask.brushSize;
+  const brushSize = state.mask.brushSize;
   const r = brushSize / 2;
   ctx.lineWidth = brushSize;
   const paintColour = isBackgroundPaintActive()
@@ -865,14 +939,11 @@ function hasMaskContent() {
 // SAM (point-prompt segmentation)
 // ============================================================================
 
-function clearClickSelection() {
+function clearClickSelection(keepCanvas = false) {
   state.mask.detectedMask = null;
   state.mask.detectionScore = 0;
-  if (state.mask.ctx) state.mask.ctx.clearRect(0, 0, $("#mask-canvas").width, $("#mask-canvas").height);
-  for (const o of ["inpaint", "blur"]) {
-    $(`#${o}-click-actions`).hidden = true;
-    $(`#${o}-click-status`).hidden = true;
-    $(`#${o}-click-status`).textContent = "";
+  if (!keepCanvas && state.mask.ctx) {
+    state.mask.ctx.clearRect(0, 0, $("#mask-canvas").width, $("#mask-canvas").height);
   }
 }
 
@@ -910,10 +981,8 @@ async function runSegmentation(clientX, clientY) {
   formData.append("x", String(imgX));
   formData.append("y", String(imgY));
   state.mask.segmenting = true;
-  const statusEl = $(`#${state.mask.owner}-click-status`);
-  statusEl.hidden = false;
+  const statusEl = $("#sel-hint");
   statusEl.textContent = "Detecting… (this takes ~1s)";
-  setStatus("Detecting object…", "");
   try {
     const resp = await fetch("/api/v1/segment", { method: "POST", body: formData });
     if (!resp.ok) {
@@ -926,11 +995,9 @@ async function runSegmentation(clientX, clientY) {
     drawDetectedMaskOnCanvas(data.mask);
     const areaPct = (data.mask_area_pct * 100).toFixed(1);
     const borderText = data.selection_border_px ? `, +${data.selection_border_px}px edge margin` : "";
-    const nextStep = state.mask.owner === "blur" ? "💧 Apply blur" : "✅ Remove";
+    const nextStep = state.mask.owner === "blur" ? "Apply blur" : "Remove object";
     statusEl.textContent =
-      `Detected (IoU ${data.score.toFixed(2)}, ${areaPct}% of image${borderText}). ${nextStep} or 🎯 Try again.`;
-    $(`#${state.mask.owner}-click-actions`).hidden = false;
-    setStatus(`Detected (IoU ${data.score.toFixed(2)}, ${areaPct}%)`, "");
+      `Selected ${areaPct}% of the image${borderText}. Press “${nextStep}”, or tap elsewhere to re-select.`;
   } catch (err) {
     setStatus(`Segmentation error: ${err.message}`, "error");
     clearClickSelection();
@@ -961,6 +1028,8 @@ function onMaskClick(evt) {
 function setMaskMode(mode) {
   state.mask.mode = mode;
   $("#mask-canvas").dataset.mode = mode;
+  const radio = document.querySelector(`input[name='sel-mode'][value='${mode}']`);
+  if (radio) radio.checked = true;
   clearClickSelection();
   // Reset paint history
   state.mask.history = [];
@@ -968,16 +1037,6 @@ function setMaskMode(mode) {
   if (state.mask.ctx) {
     state.mask.ctx.clearRect(0, 0, $("#mask-canvas").width, $("#mask-canvas").height);
   }
-  // Show/hide sub-controls
-  const owner = state.mask.owner;
-  $(`#${owner}-paint-controls`).hidden = (mode !== "paint");
-  $(`#${owner}-click-controls`).hidden = (mode !== "click");
-  // Update hint
-  const verb = owner === "blur" ? "blur" : "remove";
-  $(`#${owner}-hint`).textContent =
-    mode === "click"
-      ? `Tap an object to detect it automatically, then ${verb}.`
-      : `Drag your finger over the area to ${verb}. Brush size below.`;
 }
 
 async function processImage() {
@@ -985,9 +1044,6 @@ async function processImage() {
   state.processing = true;
   updateProcessButton();
   setStatus("Processing…", "");
-  $("#output-section").hidden = false;
-  // Scroll to output so the user sees the status update
-  $("#output-section").scrollIntoView({ behavior: "smooth", block: "start" });
 
   // Branch: if Remove Object is on AND the user has painted a mask, hit
   // the dedicated /api/v1/inpaint endpoint (it accepts a separate mask file).
@@ -996,7 +1052,7 @@ async function processImage() {
     return;
   }
   if (state.mask.enabled && state.mask.owner === "blur") {
-    setStatus("Select an area to blur first (tap an object or paint it).", "error");
+    setStatus("Select an area to blur first: tap an object or paint it.", "error");
     state.processing = false;
     updateProcessButton();
     return;
@@ -1138,7 +1194,6 @@ async function processInpaint() {
   const h = data.output_size && data.output_size.height;
   const wrapped = {
     final: data.final,
-    inpainted: data.final,   // also show under the dedicated tab
     output_size: data.output_size,
     elapsed_seconds: data.elapsed_seconds ?? 0,
   };
@@ -1205,9 +1260,9 @@ async function processBlurArea() {
 }
 
 function renderOutputs(data) {
+  $("#output-section").hidden = false;
   const map = {
     final: "out-final",
-    inpainted: "out-inpainted",
     before_after: "out-before_after",
     diff: "out-diff",
     mask: "out-mask",
@@ -1230,7 +1285,6 @@ function renderOutputs(data) {
   // Disable tabs whose data wasn't returned
   const tabAvail = {
     final: !!data.final,
-    inpainted: !!data.inpainted,
     before_after: !!data.before_after,
     diff: !!data.diff,
     mask: !!data.mask,
@@ -1238,7 +1292,7 @@ function renderOutputs(data) {
     upscaled: !!data.upscaled,
   };
   let firstActive = null;
-  $$(".output-tabs .tab").forEach((tab) => {
+  $$(".output-tabs .tab[data-tab]").forEach((tab) => {
     const name = tab.dataset.tab;
     const avail = tabAvail[name];
     tab.disabled = !avail;
@@ -1251,6 +1305,13 @@ function renderOutputs(data) {
     const targetPane = $(`.output-pane[data-pane='${firstActive.dataset.tab}']`);
     $$(".output-pane").forEach((p) => p.classList.toggle("active", p === targetPane));
   }
+
+  // "More" only appears when there are debug views to show
+  const hasDebug = $$(".output-tabs .tab-debug").some((t) => !t.disabled);
+  $("#tabs-more").hidden = !hasDebug;
+
+  setResultAvailable(true);
+  setView("result");
 
   // Output meta: bytes / format
   const meta = $("#output-meta");

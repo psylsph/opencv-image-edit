@@ -9,7 +9,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: opencv-image-edit:1.8.0
+    image: opencv-image-edit:1.9.0
     container_name: opencv-image-edit
     restart: unless-stopped
     # Keep image processing from starving Docker, Tailscale, or the host.

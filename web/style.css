@@ -50,6 +50,9 @@ body {
 
 img { max-width: 100%; height: auto; display: block; }
 
+/* Class-based display rules must not defeat the hidden attribute */
+[hidden] { display: none !important; }
+
 .sr-only {
   position: absolute; width: 1px; height: 1px;
   padding: 0; margin: -1px; overflow: hidden;
@@ -60,7 +63,7 @@ img { max-width: 100%; height: auto; display: block; }
   width: 100%;
   max-width: 640px;
   margin: 0 auto;
-  padding: calc(14px + var(--safe-top)) calc(14px + var(--safe-right)) calc(110px + var(--safe-bottom)) calc(14px + var(--safe-left));
+  padding: calc(14px + var(--safe-top)) calc(14px + var(--safe-right)) calc(96px + var(--safe-bottom)) calc(14px + var(--safe-left));
 }
 
 @media (max-width: 767px) {
@@ -506,6 +509,7 @@ input[type="range"]:focus::-moz-range-thumb { box-shadow: 0 0 0 3px rgba(110, 14
 .control-group summary:focus-visible,
 .btn:focus-visible,
 .tab:focus-visible,
+.btn-link:focus-visible,
 .checkbox-row input:focus-visible,
 .select-row select:focus-visible,
 .segmented label:has(input:focus-visible) {
@@ -518,24 +522,7 @@ input[type="range"]:focus::-moz-range-thumb { box-shadow: 0 0 0 3px rgba(110, 14
 .control-body input:disabled, .control-body select:disabled { opacity: 0.45; cursor: not-allowed; }
 .segmented:has(input:disabled) { opacity: 0.45; }
 
-/* --- Actions --- */
-.action-section {
-  position: sticky;
-  bottom: calc(6px + var(--safe-bottom));
-  display: flex;
-  flex-direction: row;
-  align-items: stretch;
-  gap: 8px;
-  margin: 18px -6px 0;
-  padding: 10px;
-  background: rgba(21, 21, 26, 0.92);
-  border: 1px solid rgba(110, 140, 255, 0.15);
-  border-radius: calc(var(--radius) + 2px);
-  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.45);
-  z-index: 20;
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-}
+/* --- Buttons --- */
 .btn {
   display: flex;
   align-items: center;
@@ -565,47 +552,32 @@ input[type="range"]:focus::-moz-range-thumb { box-shadow: 0 0 0 3px rgba(110, 14
 .btn-secondary { background: var(--surface-2); color: var(--fg); border: 1px solid var(--border); }
 .btn-secondary:hover:not(:disabled) { background: var(--surface-3); border-color: var(--accent); }
 .btn-ghost { background: transparent; color: var(--fg-subtle); min-height: 42px; font-weight: 600; }
-.action-section #process-btn { flex: 1 1 auto; }
-.action-section #reset-btn {
-  flex: 0 0 auto;
-  min-height: 56px;
-  gap: 6px;
-  padding: 0 14px;
-  border: 1px solid var(--border);
-}
 .btn-ghost:hover:not(:disabled) { color: var(--fg); background: rgba(255,255,255,0.03); }
 
-body:not(.has-file) .action-section {
-  position: static;
-  margin: 8px 0 0;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-body:not(.has-file) #process-btn { display: none; }
-body:not(.has-file) #reset-btn {
-  flex: 1 1 auto;
-  min-height: 40px;
-  opacity: 0.7;
-}
 
 /* --- Output --- */
 .output-section { margin-top: 18px; }
 .status-bar {
-  min-height: 24px;
+  position: fixed;
+  left: calc(14px + var(--safe-left));
+  right: calc(14px + var(--safe-right));
+  bottom: calc(86px + var(--safe-bottom));
+  max-width: 612px;
+  margin: 0 auto;
+  z-index: 30;
   font-size: 14px;
-  color: var(--fg-dim);
-  margin-bottom: 10px;
+  color: var(--fg);
   text-align: center;
-  padding: 6px 10px;
+  padding: 10px 14px;
   word-wrap: break-word;
-  background: var(--surface);
+  background: rgba(31, 31, 38, 0.96);
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
+.status-bar:empty { display: none; }
 .status-bar.error { color: var(--error); background: rgba(255, 107, 107, 0.08); border-color: rgba(255, 107, 107, 0.3); }
 .status-bar.success { color: var(--success); background: rgba(85, 223, 116, 0.08); border-color: rgba(85, 223, 116, 0.3); }
 .output-tabs {
@@ -693,3 +665,103 @@ body:not(.has-file) #reset-btn {
     animation-duration: 0.01ms !important;
   }
 }
+
+/* --- Bottom navigation (Edit | Process | Result) --- */
+.bottom-nav {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  z-index: 40;
+  display: grid;
+  grid-template-columns: 1fr 2fr 1fr;
+  align-items: center;
+  gap: 10px;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 10px calc(14px + var(--safe-right)) calc(10px + var(--safe-bottom)) calc(14px + var(--safe-left));
+  background: rgba(15, 15, 20, 0.94);
+  border-top: 1px solid var(--border);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.bottom-nav .btn-primary { min-height: 52px; padding: 8px 12px; }
+.nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 52px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.nav-item > span:first-child { font-size: 20px; line-height: 1; }
+.nav-item.active { color: var(--accent-2); }
+.nav-item:disabled { opacity: 0.35; cursor: not-allowed; }
+.nav-item:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+
+/* Two views: Edit (photo + controls) and Result (output) */
+body[data-view="result"] .upload-section,
+body[data-view="result"] .presets-section,
+body[data-view="result"] .controls-section { display: none; }
+body[data-view="edit"] .output-section { display: none; }
+
+/* --- Shared selection toolbar (sits under the photo) --- */
+.select-toolbar {
+  margin-top: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid rgba(110, 140, 255, 0.35);
+  border-radius: var(--radius);
+}
+.select-toolbar[hidden] { display: none; }
+.select-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.select-head strong { font-size: 14px; }
+.segmented-sm { flex: 0 0 auto; min-width: 150px; }
+.segmented-sm label { min-height: 36px; }
+
+/* --- Preset meta row + link button --- */
+.preset-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 6px; }
+.preset-meta .preset-description { margin-top: 0; }
+.btn-link {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 0 4px 0 12px;
+  background: none;
+  border: none;
+  color: var(--accent-2);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-link:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; border-radius: 6px; }
+
+/* Output: debug tabs live behind "More" */
+.output-tabs[data-more="false"] .tab-debug { display: none; }
+.tab-more { flex: 0 0 auto; }
+
+/* --- Rotate / flip bar (under the photo) --- */
+.transform-bar {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.transform-bar .btn {
+  flex-direction: column;
+  gap: 0;
+  min-height: 52px;
+  padding: 6px 4px;
+  font-size: 20px;
+  line-height: 1.1;
+}
+.transform-bar small { font-size: 11px; font-weight: 600; color: var(--fg-dim); }

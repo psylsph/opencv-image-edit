@@ -21,6 +21,8 @@ Mobile-first AI image editor — background blur/removal, film grain, 4× AI ups
 - **Film grain** — luminance-aware, Rec.601-weighted noise that preserves subject detail.
 - **AI upscale** — 2× / 4× via OpenCV DNN `cv2.dnn_superres.EDSR` with LANCZOS4 fallback.
 - **Filters** — brightness, contrast, saturation, sharpness, sepia, grayscale, blur, vignette, unsharp mask, auto-enhance.
+- **Blur Area** — tap or paint any region and blur it (or blur everything else).
+- **Rotate / flip** — rotate left/right and flip the photo before editing.
 - **Before/after comparison** — side-by-side and diff overlay.
 - **Presets** — one-tap *Portrait*, *Landscape*, *Vintage*, *Minimal*.
 
