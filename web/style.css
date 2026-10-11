@@ -210,28 +210,6 @@ img { max-width: 100%; height: auto; display: block; }
   touch-action: none;          /* paint mode: the finger draws */
 }
 #mask-canvas[data-mode="click"] { touch-action: pan-y pinch-zoom; }  /* tap to select, drag to scroll */
-.preview-clear {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  width: 36px;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(11, 11, 15, 0.75);
-  color: var(--fg);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 50%;
-  font-size: 18px;
-  font-weight: 600;
-  cursor: pointer;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  transition: background 0.15s, transform 0.1s, color 0.15s;
-}
-.preview-clear:hover { background: rgba(255, 107, 107, 0.9); color: #fff; transform: scale(1.05); }
-.preview-clear:active { transform: scale(0.95); }
 
 /* --- Presets --- */
 .presets-section { margin-bottom: 22px; }
@@ -753,8 +731,8 @@ body[data-view="edit"] .output-section { display: none; }
 .transform-bar {
   margin-top: 10px;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
 }
 .transform-bar .btn {
   flex-direction: column;
@@ -765,3 +743,5 @@ body[data-view="edit"] .output-section { display: none; }
   line-height: 1.1;
 }
 .transform-bar small { font-size: 11px; font-weight: 600; color: var(--fg-dim); }
+.btn-danger { color: var(--error); }
+.btn-danger:hover:not(:disabled) { border-color: var(--error); }

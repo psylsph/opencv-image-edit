@@ -12,7 +12,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="style.css?v=21" />
+  <link rel="stylesheet" href="style.css?v=22" />
 </head>
 <body>
   <main class="app">
@@ -33,12 +33,12 @@
           <img id="preview" alt="Uploaded preview" />
           <canvas id="mask-canvas" hidden></canvas>
         </div>
-        <button id="clear-btn" class="preview-clear" type="button" aria-label="Clear uploaded image">✕</button>
         <div class="transform-bar" role="group" aria-label="Rotate and flip">
           <button class="btn btn-secondary" id="rot-ccw" type="button" aria-label="Rotate left"><span aria-hidden="true">⟲</span><small>Left</small></button>
           <button class="btn btn-secondary" id="rot-cw" type="button" aria-label="Rotate right"><span aria-hidden="true">⟳</span><small>Right</small></button>
           <button class="btn btn-secondary" id="flip-h" type="button" aria-label="Flip horizontally"><span aria-hidden="true">⇋</span><small>Flip H</small></button>
           <button class="btn btn-secondary" id="flip-v" type="button" aria-label="Flip vertically"><span aria-hidden="true">⇅</span><small>Flip V</small></button>
+          <button class="btn btn-secondary btn-danger" id="clear-btn" type="button" aria-label="Remove this photo"><span aria-hidden="true">✕</span><small>Remove</small></button>
         </div>
         <div id="select-toolbar" class="select-toolbar" hidden>
           <div class="select-head">
@@ -326,6 +326,6 @@
     </button>
   </nav>
 
-  <script type="module" src="app.js?v=30"></script>
+  <script type="module" src="app.js?v=31"></script>
 </body>
 </html>
