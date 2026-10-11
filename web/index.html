@@ -148,6 +148,55 @@
         </div>
       </details>
 
+      <details class="control-group" id="blur-group">
+        <summary>
+          <span class="control-icon" aria-hidden="true">💧</span>
+          <span>Blur Area</span>
+        </summary>
+        <div class="control-body">
+          <label class="checkbox-row">
+            <input type="checkbox" id="blur-enabled" />
+            <span>Enable selective blur</span>
+          </label>
+          <fieldset class="segmented" id="blur-mode">
+            <legend class="sr-only">Selection mode</legend>
+            <label><input type="radio" name="blur-mode" value="click" checked /><span>🎯 Click</span></label>
+            <label><input type="radio" name="blur-mode" value="paint" /><span>✏️ Paint</span></label>
+          </fieldset>
+          <p class="control-hint" id="blur-hint">Tap an object to select it, then blur it.</p>
+
+          <div id="blur-paint-controls" hidden>
+            <label class="slider-row">
+              <span>Brush size <output id="blur-brush-value">24</output></span>
+              <input type="range" id="blur-brush-size" min="5" max="80" step="1" value="24" />
+            </label>
+            <div class="inpaint-buttons">
+              <button id="blur-undo" class="btn btn-secondary" type="button">↶ Undo</button>
+              <button id="blur-clear" class="btn btn-secondary" type="button">🗑️ Clear</button>
+            </div>
+          </div>
+
+          <div id="blur-click-controls">
+            <div class="inpaint-buttons" id="blur-click-actions" hidden>
+              <button id="blur-retry" class="btn btn-secondary" type="button">🎯 Try again</button>
+              <button id="blur-cancel" class="btn btn-secondary" type="button">❌ Cancel</button>
+            </div>
+            <p class="control-hint" id="blur-click-status" hidden></p>
+          </div>
+
+          <fieldset class="segmented" id="blur-target">
+            <legend class="sr-only">What to blur</legend>
+            <label><input type="radio" name="blur-target" value="selection" checked /><span>Blur selection</span></label>
+            <label><input type="radio" name="blur-target" value="outside" /><span>Blur everything else</span></label>
+          </fieldset>
+          <label class="slider-row">
+            <span>Blur strength <output id="blur-area-value">15</output></span>
+            <input type="range" id="blur-area-strength" min="1" max="50" value="15" />
+          </label>
+          <button id="blur-apply" class="btn btn-primary" type="button">💧 Apply blur</button>
+        </div>
+      </details>
+
       <details class="control-group" id="inpaint-group">
         <summary>
           <span class="control-icon" aria-hidden="true">✂️</span>

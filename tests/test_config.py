@@ -30,7 +30,7 @@ def test_settings_defaults() -> None:
     assert s.blur_strength_max == 50
     assert s.grain_intensity_max == 1.0
     # App metadata
-    assert s.app_version == "1.3.0"
+    assert s.app_version == "1.7.1"
     assert s.app_name == "opencv-image-edit"
 
 

@@ -440,3 +440,42 @@ def test_app_loads_without_error():
 
     assert app.title  # has a title set from settings
     assert len(app.routes) > 0
+
+
+class TestBlurEndpoint:
+    def _png(self, arr):
+        import cv2
+
+        return cv2.imencode(".png", arr)[1].tobytes()
+
+    def test_blur_selection(self, test_client: TestClient):
+        import numpy as np
+
+        rng = np.random.default_rng(1)
+        img = rng.integers(0, 255, (48, 64, 3), dtype=np.uint8)
+        mask = np.zeros((48, 64), np.uint8)
+        mask[:, :32] = 255
+        r = test_client.post(
+            "/api/v1/blur",
+            files={
+                "file": ("a.png", self._png(img), "image/png"),
+                "mask": ("m.png", self._png(mask), "image/png"),
+            },
+            data={"strength": "10", "target": "outside"},
+        )
+        assert r.status_code == 200
+        assert r.json()["final"].startswith("data:image/png;base64,")
+
+    def test_blur_rejects_mismatched_mask(self, test_client: TestClient):
+        import numpy as np
+
+        img = np.zeros((48, 64, 3), np.uint8)
+        mask = np.zeros((10, 10), np.uint8)
+        r = test_client.post(
+            "/api/v1/blur",
+            files={
+                "file": ("a.png", self._png(img), "image/png"),
+                "mask": ("m.png", self._png(mask), "image/png"),
+            },
+        )
+        assert r.status_code == 400

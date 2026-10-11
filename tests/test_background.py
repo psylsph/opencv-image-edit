@@ -252,3 +252,18 @@ def cv2_blur(img: np.ndarray, sigma: int) -> np.ndarray:
     import cv2
 
     return cv2.GaussianBlur(img, (0, 0), sigmaX=sigma)
+
+
+def test_selection_blur_selection_vs_outside():
+    from app.pipeline.background import apply_selection_blur
+
+    rng = np.random.default_rng(0)
+    img = rng.integers(0, 255, (40, 40, 3), dtype=np.uint8)
+    sel = np.zeros((40, 40), np.uint8)
+    sel[:, :20] = 255
+    inside = apply_selection_blur(img, sel, 5, "selection", feather=0)
+    assert np.array_equal(inside[:, 25:], img[:, 25:])
+    assert not np.array_equal(inside[:, :15], img[:, :15])
+    outside = apply_selection_blur(img, sel, 5, "outside", feather=0)
+    assert np.array_equal(outside[:, :15], img[:, :15])
+    assert not np.array_equal(outside[:, 25:], img[:, 25:])

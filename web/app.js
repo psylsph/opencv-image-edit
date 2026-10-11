@@ -23,6 +23,7 @@ const state = {
   // Mask canvas drawing state
   mask: {
     enabled: false,
+    owner: "inpaint",       // which group owns the shared canvas: "inpaint" | "blur"
     mode: "click",          // "click" = SAM point-prompt, "paint" = manual brush
     ctx: null,              // 2D rendering context
     displayW: 0,            // canvas CSS size (matches RENDERED image, not element box)
@@ -146,20 +147,48 @@ function bindEvents() {
     });
   });
 
-  // Inpaint (object removal) toggle
-  $("#inpaint-enabled").addEventListener("change", (e) => {
-    state.mask.enabled = e.target.checked;
-    $("#mask-canvas").hidden = !e.target.checked;
-    if (e.target.checked) {
-      if (state.mask.imageW) setupMaskCanvas();
-    } else {
-      clearClickSelection();
-    }
+  // Inpaint (object removal) and Blur Area share one selection canvas; only one
+  // group can own it at a time.
+  for (const owner of ["inpaint", "blur"]) {
+    const other = owner === "inpaint" ? "blur" : "inpaint";
+    $(`#${owner}-enabled`).addEventListener("change", (e) => {
+      if (e.target.checked) {
+        $(`#${other}-enabled`).checked = false;
+        clearClickSelection();
+        state.mask.owner = owner;
+        state.mask.enabled = true;
+        $("#mask-canvas").hidden = false;
+        // restore this group's mode (click/paint) on the shared canvas
+        setMaskMode(document.querySelector(`input[name='${owner}-mode']:checked`).value);
+        if (state.mask.imageW) setupMaskCanvas();
+      } else if (state.mask.owner === owner) {
+        state.mask.enabled = false;
+        $("#mask-canvas").hidden = true;
+        clearClickSelection();
+      }
+    });
+    // Mode switcher (Click vs Paint)
+    $$(`input[name='${owner}-mode']`).forEach((r) => {
+      r.addEventListener("change", (e) => setMaskMode(e.target.value));
+    });
+  }
+  // Blur Area controls
+  $("#blur-brush-size").addEventListener("input", (e) => {
+    state.mask.brushSize = parseInt(e.target.value, 10);
+    $("#blur-brush-value").textContent = state.mask.brushSize;
   });
-  // Mode switcher (Click vs Paint)
-  $$("input[name='inpaint-mode']").forEach((r) => {
-    r.addEventListener("change", (e) => setMaskMode(e.target.value));
+  $("#blur-area-strength").addEventListener("input", (e) => {
+    $("#blur-area-value").textContent = e.target.value;
   });
+  $("#blur-undo").addEventListener("click", undoMaskStroke);
+  $("#blur-clear").addEventListener("click", clearMask);
+  $("#blur-retry").addEventListener("click", () => {
+    clearClickSelection();
+    $("#blur-click-status").hidden = false;
+    $("#blur-click-status").textContent = "Tap another point to try again.";
+  });
+  $("#blur-cancel").addEventListener("click", clearClickSelection);
+  $("#blur-apply").addEventListener("click", processImage);
   // Brush size live update
   $("#brush-size").addEventListener("input", (e) => {
     state.mask.brushSize = parseInt(e.target.value, 10);
@@ -777,9 +806,11 @@ function clearClickSelection() {
   state.mask.detectedMask = null;
   state.mask.detectionScore = 0;
   if (state.mask.ctx) state.mask.ctx.clearRect(0, 0, $("#mask-canvas").width, $("#mask-canvas").height);
-  $("#inpaint-click-actions").hidden = true;
-  $("#inpaint-click-status").hidden = true;
-  $("#inpaint-click-status").textContent = "";
+  for (const o of ["inpaint", "blur"]) {
+    $(`#${o}-click-actions`).hidden = true;
+    $(`#${o}-click-status`).hidden = true;
+    $(`#${o}-click-status`).textContent = "";
+  }
 }
 
 function drawDetectedMaskOnCanvas(dataUrl) {
@@ -816,8 +847,9 @@ async function runSegmentation(clientX, clientY) {
   formData.append("x", String(imgX));
   formData.append("y", String(imgY));
   state.mask.segmenting = true;
-  $("#inpaint-click-status").hidden = false;
-  $("#inpaint-click-status").textContent = "Detecting… (this takes ~1s)";
+  const statusEl = $(`#${state.mask.owner}-click-status`);
+  statusEl.hidden = false;
+  statusEl.textContent = "Detecting… (this takes ~1s)";
   setStatus("Detecting object…", "");
   try {
     const resp = await fetch("/api/v1/segment", { method: "POST", body: formData });
@@ -831,9 +863,10 @@ async function runSegmentation(clientX, clientY) {
     drawDetectedMaskOnCanvas(data.mask);
     const areaPct = (data.mask_area_pct * 100).toFixed(1);
     const borderText = data.selection_border_px ? `, +${data.selection_border_px}px edge margin` : "";
-    $("#inpaint-click-status").textContent =
-      `Detected (IoU ${data.score.toFixed(2)}, ${areaPct}% of image${borderText}). ✅ Remove or 🎯 Try again.`;
-    $("#inpaint-click-actions").hidden = false;
+    const nextStep = state.mask.owner === "blur" ? "💧 Apply blur" : "✅ Remove";
+    statusEl.textContent =
+      `Detected (IoU ${data.score.toFixed(2)}, ${areaPct}% of image${borderText}). ${nextStep} or 🎯 Try again.`;
+    $(`#${state.mask.owner}-click-actions`).hidden = false;
     setStatus(`Detected (IoU ${data.score.toFixed(2)}, ${areaPct}%)`, "");
   } catch (err) {
     setStatus(`Segmentation error: ${err.message}`, "error");
@@ -872,13 +905,15 @@ function setMaskMode(mode) {
     state.mask.ctx.clearRect(0, 0, $("#mask-canvas").width, $("#mask-canvas").height);
   }
   // Show/hide sub-controls
-  $("#inpaint-paint-controls").hidden = (mode !== "paint");
-  $("#inpaint-click-controls").hidden = (mode !== "click");
+  const owner = state.mask.owner;
+  $(`#${owner}-paint-controls`).hidden = (mode !== "paint");
+  $(`#${owner}-click-controls`).hidden = (mode !== "click");
   // Update hint
-  $("#inpaint-hint").textContent =
+  const verb = owner === "blur" ? "blur" : "remove";
+  $(`#${owner}-hint`).textContent =
     mode === "click"
-      ? "Tap an object to detect it automatically, then remove."
-      : "Drag your finger over the object to remove it. Brush size below.";
+      ? `Tap an object to detect it automatically, then ${verb}.`
+      : `Drag your finger over the area to ${verb}. Brush size below.`;
 }
 
 async function processImage() {
@@ -893,7 +928,13 @@ async function processImage() {
   // Branch: if Remove Object is on AND the user has painted a mask, hit
   // the dedicated /api/v1/inpaint endpoint (it accepts a separate mask file).
   if (state.mask.enabled && hasMaskContent()) {
-    await processInpaint();
+    await (state.mask.owner === "blur" ? processBlurArea() : processInpaint());
+    return;
+  }
+  if (state.mask.enabled && state.mask.owner === "blur") {
+    setStatus("Select an area to blur first (tap an object or paint it).", "error");
+    state.processing = false;
+    updateProcessButton();
     return;
   }
 
@@ -1029,6 +1070,58 @@ async function processInpaint() {
   const sizeStr = (w && h) ? ` · ${w}×${h}` : "";
   const secs = (data.elapsed_seconds ?? 0).toFixed(2);
   setStatus(`Inpainted (${algorithm}, r=${radius}) in ${secs}s${sizeStr}`, "success");
+  state.processing = false;
+  updateProcessButton();
+}
+
+async function processBlurArea() {
+  const strength = parseInt($("#blur-area-strength").value, 10);
+  const target = document.querySelector("input[name='blur-target']:checked").value;
+  const fail = (msg) => {
+    setStatus(msg, "error");
+    state.processing = false;
+    updateProcessButton();
+  };
+
+  let maskBlob;
+  try {
+    maskBlob = await getMaskPngBlob();
+  } catch (err) {
+    return fail(`Error preparing mask: ${err.message}`);
+  }
+  if (!maskBlob) return fail("Error: could not serialize mask");
+
+  const formData = new FormData();
+  formData.append("file", state.file);
+  formData.append("mask", maskBlob, "mask.png");
+  formData.append("strength", String(strength));
+  formData.append("target", target);
+
+  let resp;
+  try {
+    resp = await fetch("/api/v1/blur", { method: "POST", body: formData });
+  } catch (networkErr) {
+    return fail(`Network error: ${networkErr.message}`);
+  }
+  if (!resp.ok) {
+    let errMsg = `HTTP ${resp.status}`;
+    try {
+      const errBody = await resp.json();
+      errMsg = errBody.detail || errBody.message || errMsg;
+    } catch { /* ignore */ }
+    return fail(`Error: ${errMsg}`);
+  }
+  let data;
+  try {
+    data = await resp.json();
+  } catch {
+    return fail("Error: invalid JSON response");
+  }
+
+  state.lastResult = data;
+  renderOutputs(data);
+  const secs = (data.elapsed_seconds ?? 0).toFixed(2);
+  setStatus(`Blurred ${target === "outside" ? "everything else" : "selection"} (σ=${strength}) in ${secs}s`, "success");
   state.processing = false;
   updateProcessButton();
 }

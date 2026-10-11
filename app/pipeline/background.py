@@ -91,3 +91,39 @@ def get_alpha_debug(mask: np.ndarray) -> np.ndarray:
     lo, hi = float(mask.min()), float(mask.max())
     stretched = (mask - lo) * 255.0 / (hi - lo) if hi > lo else np.zeros_like(mask)
     return np.clip(stretched, 0, 255).astype(np.uint8)
+
+
+def apply_selection_blur(
+    img_bgr: np.ndarray,
+    selection: np.ndarray,
+    blur_strength: int = 15,
+    target: str = "selection",
+    feather: float = 3.0,
+) -> np.ndarray:
+    """Blur a user-chosen region (or everything outside it).
+
+    Args:
+        img_bgr: BGR (H, W, 3) or BGRA uint8 image. Alpha is passed through.
+        selection: (H, W) mask, nonzero / > 0.5 = selected region.
+        blur_strength: Gaussian sigma. 1-50.
+        target: "selection" blurs the selected region; "outside" blurs
+            everything else (selection stays sharp).
+        feather: sigma of the edge softening applied to the selection.
+    """
+    if target not in ("selection", "outside"):
+        raise ValueError(f"unknown blur target: {target!r}")
+    alpha_ch = None
+    if img_bgr.ndim == 3 and img_bgr.shape[2] == 4:
+        alpha_ch = img_bgr[:, :, 3]
+        img_bgr = img_bgr[:, :, :3]
+    sel = selection.astype(np.float32)
+    if sel.max() > 1.0:
+        sel = sel / 255.0
+    sel = _resize_mask_to_image(sel, img_bgr.shape)
+    if feather > 0:
+        sel = cv2.GaussianBlur(sel, (0, 0), sigmaX=feather)
+    sharp_mask = 1.0 - sel if target == "selection" else sel
+    out = apply_background_blur(img_bgr, sharp_mask, blur_strength)
+    if alpha_ch is not None:
+        out = np.dstack([out, alpha_ch])
+    return out
