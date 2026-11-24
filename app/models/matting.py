@@ -167,8 +167,7 @@ def get_matting_model(
     mark_model_used()
     if model_name not in MATTING_MODELS:
         raise ModelNotFoundError(
-            f"unknown matting model '{model_name}'. "
-            f"Available: {', '.join(MATTING_MODELS)}"
+            f"unknown matting model '{model_name}'. Available: {', '.join(MATTING_MODELS)}"
         )
 
     cached = _cache.get(model_name)

@@ -4,8 +4,8 @@
     python3 tools/parity/run.py [case ...] [--keep DIR] [--chrome /path/to/chromium]
 
 Each case renders the same synthetic photo through app/pipeline (background.py, grain.py, filters.py) and through gl.js in headless
-Chromium (SwiftShader, so no GPU needed) and compares the pictures. Needs numpy, opencv and Pillow (see
-requirements.txt) and a Chromium/Chrome binary. Not part of pytest: it needs a browser. Run it after changing gl.js or
+Chromium (SwiftShader, so no GPU needed) and compares the pictures. Needs numpy, opencv, Pillow and websockets and a
+Chromium/Chrome binary. Not part of pytest: it needs a browser. Run it after changing gl.js or
 the filter/grain maths. Exit status 1 when a case drifts more than its threshold.
 
 Grain can't match per pixel (different random generators), so it is compared by statistics: how strongly the grain
@@ -23,6 +23,8 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
+import urllib.request
 import urllib.parse
 from pathlib import Path
 
@@ -47,7 +49,10 @@ def _load(name):
 
 _filters, _grain, _bg = _load("filters"), _load("grain"), _load("background")
 add_vignette, apply_color_adjustments = _filters.add_vignette, _filters.apply_color_adjustments
-apply_background_blur = _bg.apply_background_blur
+apply_background_blur, apply_background_replace = (
+    _bg.apply_background_blur,
+    _bg.apply_background_replace,
+)
 apply_grayscale, apply_sepia, apply_grain = (
     _filters.apply_grayscale,
     _filters.apply_sepia,
@@ -103,7 +108,33 @@ CASES = {
         "filters": F(brightness=1.2, saturation=1.3)["filters"],
     },
 }
-LOOSE.update({"bg_blur_small": 3.0, "bg_blur_large": 4.0, "bg_blur_plus_filters": 4.0})
+
+
+def _bgcase(**kw):
+    return {"background": {"enabled": True, "mode": "image", **kw}}
+
+
+CASES.update(
+    {
+        "bg_color": _bgcase(mode="color", color="#2040c0"),
+        "bg_color_shrink_out": _bgcase(mode="color", color="#2040c0", shrink=-0.6),
+        "bg_image": _bgcase(),
+        "bg_image_zoom_pan": _bgcase(zoom=2.0, offset_x=-0.5, offset_y=0.3),
+        "bg_image_feather_shrink": _bgcase(feather=0.5, shrink=0.4),
+        "bg_image_and_filters": {
+            **_bgcase(feather=0.3),
+            "filters": F(contrast=1.3, sepia=True)["filters"],
+        },
+    }
+)
+LOOSE.update(
+    {
+        "bg_blur_small": 3.0,
+        "bg_blur_large": 4.0,
+        "bg_blur_plus_filters": 4.0,
+        "bg_image_and_filters": 4.0,
+    }
+)
 
 
 def photo(w=640, h=480):
@@ -119,6 +150,17 @@ def photo(w=640, h=480):
     return np.clip(img, 0, 255).astype(np.uint8)  # RGB
 
 
+def backdrop(w=800, h=300):
+    """A wide synthetic backdrop (different aspect from the photo, so the cover fit crops it)."""
+    y, x = np.mgrid[0:h, 0:w].astype(np.float32)
+    img = np.stack(
+        [255 - x / w * 200, (np.sin(x / 40) * 0.5 + 0.5) * 200 + 30, y / h * 220 + 20], -1
+    )
+    cv2.rectangle(img, (w // 2 - 60, 40), (w // 2 + 60, 140), (250, 240, 20), -1)
+    cv2.circle(img, (120, 220), 50, (20, 20, 20), -1)
+    return np.clip(img, 0, 255).astype(np.uint8)  # RGB
+
+
 def matte(w=640, h=480):
     """A soft-edged 8-bit matte (what /api/v1/matte returns): a disc around the red circle."""
     m = np.zeros((h, w), np.float32)
@@ -130,7 +172,21 @@ def server_render(rgb, s):
     bgr = rgb[:, :, ::-1].copy()
     b = s.get("background")
     if b and b["enabled"]:
-        bgr = apply_background_blur(bgr, matte().astype(np.float32) / 255.0, b["blur_strength"])
+        m = matte().astype(np.float32) / 255.0
+        if b["mode"] in ("color", "image"):
+            bgr = apply_background_replace(
+                bgr,
+                m,
+                color=b["color"] if b["mode"] == "color" else None,
+                background=backdrop()[:, :, ::-1].copy() if b["mode"] == "image" else None,
+                zoom=b.get("zoom", 1.0),
+                offset_x=b.get("offset_x", 0.0),
+                offset_y=b.get("offset_y", 0.0),
+                feather=b.get("feather", 0.0),
+                shrink=b.get("shrink", 0.0),
+            )
+        else:
+            bgr = apply_background_blur(bgr, m, b["blur_strength"])
     g = s.get("grain")
     if g and g["enabled"]:
         bgr, _ = apply_grain(bgr, g["intensity"], seed=1)
@@ -148,52 +204,81 @@ def server_render(rgb, s):
     return bgr[:, :, ::-1]
 
 
-def browser_render(chrome, base, img_path, s):
-    mask = "&mask=/matte.png" if s.get("background") else ""
-    url = f"{base}/tools/parity/page.html?img={urllib.parse.quote(img_path)}{mask}&s={urllib.parse.quote(json.dumps(s))}"
-    for attempt in range(3):  # headless Chromium sometimes dumps the DOM before the module has run
-        profile = tempfile.mkdtemp(prefix="parity-chrome-")
-        try:
-            r = _run_chrome(chrome, profile, url)
-        except subprocess.TimeoutExpired:  # headless Chromium occasionally never exits
-            continue
-        finally:
-            shutil.rmtree(profile, ignore_errors=True)
-        m = base64_png(r.stdout)
-        if m is not None:
-            return m
-    raise RuntimeError("browser gave no picture after 3 tries")
+def browser_render_all(chrome, url, timeout=180):
+    """Open the parity page in headless Chromium (SwiftShader), wait for it to finish and return its JSON."""
+    from websockets.sync.client import connect
 
-
-def _run_chrome(chrome, profile, url):
-    return subprocess.run(
+    port = 9445
+    profile = tempfile.mkdtemp(prefix="parity-chrome-")
+    proc = subprocess.Popen(
         [
             chrome,
             "--headless=new",
             "--no-sandbox",
-            "--disable-gpu-sandbox",
             "--use-gl=angle",
             "--use-angle=swiftshader",
             "--enable-unsafe-swiftshader",
             "--ignore-gpu-blocklist",
             f"--user-data-dir={profile}",
-            "--virtual-time-budget=8000",
-            "--dump-dom",
-            url,
+            f"--remote-debugging-port={port}",
+            "about:blank",
         ],
-        capture_output=True,
-        text=True,
-        timeout=40,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
+    try:
+        tabs = None
+        for _ in range(100):
+            try:
+                tabs = json.load(urllib.request.urlopen(f"http://127.0.0.1:{port}/json"))
+                break
+            except Exception:  # noqa: BLE001
+                time.sleep(0.2)
+        if not tabs:
+            raise RuntimeError("Chromium did not start")
+        page = next(t for t in tabs if t["type"] == "page")
+        with connect(page["webSocketDebuggerUrl"], max_size=None) as ws:
+            n = 0
+
+            def call(method, **params):
+                nonlocal n
+                n += 1
+                ws.send(json.dumps({"id": n, "method": method, "params": params}))
+                while True:
+                    msg = json.loads(ws.recv())
+                    if msg.get("id") == n:
+                        return msg.get("result", msg)
+
+            call("Page.navigate", url=url)
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                time.sleep(0.5)
+                v = call(
+                    "Runtime.evaluate",
+                    expression="document.getElementById('out') && document.getElementById('out').textContent",
+                    returnByValue=True,
+                )["result"].get("value")
+                if v and v != "pending":
+                    data = json.loads(v)
+                    if "__error" in data:
+                        raise RuntimeError(data["__error"])
+                    return data
+            raise RuntimeError("the parity page did not finish in time")
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        shutil.rmtree(profile, ignore_errors=True)
 
 
-def base64_png(dom):
-    i = dom.find("data:image/png;base64,")
-    if i < 0:
-        return None
-    j = dom.find("<", i)
-    data = dom[i + len("data:image/png;base64,") : j].strip()
-    return np.array(Image.open(io.BytesIO(base64.b64decode(data))).convert("RGB"))
+def decode_png(data_url):
+    if not data_url.startswith("data:image/png;base64,"):
+        raise RuntimeError(data_url[:200])
+    return np.array(
+        Image.open(io.BytesIO(base64.b64decode(data_url.split(",", 1)[1]))).convert("RGB")
+    )
 
 
 def judge(name, want, got):
@@ -242,6 +327,7 @@ def main():
     rgb = photo()
     Image.fromarray(rgb).save(work / "photo.png")
     Image.fromarray(matte()).save(work / "matte.png")
+    Image.fromarray(backdrop()).save(work / "backdrop.png")
 
     class Quiet(http.server.SimpleHTTPRequestHandler):
         def log_message(self, *args):
@@ -254,12 +340,28 @@ def main():
     keep = Path(a.keep) if a.keep else None
     if keep:
         keep.mkdir(parents=True, exist_ok=True)
-    failed = 0
+    cases = {}
     for n in names:
-        s = CASES[n]
-        want = server_render(rgb, s)
+        bgs = CASES[n].get("background") or {}
+        cases[n] = {
+            "settings": CASES[n],
+            "mask": "/matte.png" if bgs else None,
+            "bg": "/backdrop.png" if bgs.get("mode") == "image" else None,
+        }
+    (work / "cases.json").write_text(json.dumps(cases))
+    failed = 0
+    try:
+        results = browser_render_all(
+            chrome, f"{base}/tools/parity/page.html?img=/photo.png&cases=/cases.json"
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"FAIL: {e}")
+        results = {}
+        failed = len(names)
+    for n in names if results else []:
+        want = server_render(rgb, CASES[n])
         try:
-            got = browser_render(chrome, base, "/photo.png", s)
+            got = decode_png(results[n])
         except Exception as e:  # noqa: BLE001
             print(f"FAIL {n}: {e}")
             failed += 1

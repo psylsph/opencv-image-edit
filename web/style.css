@@ -398,6 +398,19 @@ img { max-width: 100%; height: auto; display: block; }
 .segmented label:hover > span { background: rgba(255, 255, 255, 0.04); }
 .segmented input[type="radio"]:checked + span:hover { background: var(--accent); }
 
+/* Replacement background (colour / photo) */
+#bg-replace { display: flex; flex-direction: column; gap: 14px; }
+#bg-replace[hidden], #bg-replace [hidden] { display: none; }
+.bg-color-row, .bg-image-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.swatches { display: flex; gap: 8px; flex-wrap: wrap; }
+.swatch {
+  width: 44px; height: 44px; border-radius: 50%;
+  border: 2px solid var(--border); padding: 0; cursor: pointer;
+}
+.swatch[aria-pressed="true"] { border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }
+#bg-color { width: 44px; height: 44px; padding: 2px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2); }
+#bg-image-thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); }
+
 /* Slider / select / checkbox rows */
 .slider-row, .select-row {
   display: flex;

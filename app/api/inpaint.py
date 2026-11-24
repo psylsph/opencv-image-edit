@@ -71,9 +71,7 @@ async def inpaint_endpoint(
     )
 
     try:
-        result = inpaint(
-            img, mask_img, radius=radius, algorithm=algorithm, iterations=iterations
-        )
+        result = inpaint(img, mask_img, radius=radius, algorithm=algorithm, iterations=iterations)
     except ModelNotFoundError as exc:
         # LaMa model missing — count separately so /health + metrics reflect it
         image_process_total.labels(status="model_missing").inc()

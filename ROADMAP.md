@@ -93,31 +93,34 @@ still recomputes the matte on the server (next: send the cached matte back so Pr
 
 Server contract (mirrors vid-ed-mobile's `bg.mode`):
 
-- [ ] Extend `BackgroundRequest.mode` to `blur | remove | color | image` (keep `remove` = transparent).
-- [ ] `POST /api/v1/process` takes an optional `background_image` upload (same size/type limits and HEIC/EXIF handling
+- [x] Extend `BackgroundRequest.mode` to `blur | remove | color | image` (keep `remove` = transparent).
+- [x] `POST /api/v1/process` takes an optional `background_image` upload (same size/type limits and HEIC/EXIF handling
       as the main image, via `read_image_bytes` / `decode_to_bgr`).
-- [ ] `apply_background_replace(img, mask, bg)` in `app/pipeline/background.py`: cover-fit the new background to the
+- [x] `apply_background_replace(img, mask, ...)` in `app/pipeline/background.py`: cover-fit the new background to the
       subject photo, then alpha-composite. Tests with synthetic masks, like the existing background tests.
-- [ ] Bad inputs return clear errors (unreadable background, absurd dimensions); no silent fallback to blur.
+- [x] Bad inputs return clear errors (unreadable background, absurd dimensions); no silent fallback to blur.
 
 Making it look right (this is what separates a pasted-on cut-out from a good one; all of it is cheap maths):
 
-- [ ] **Edge tools**: soften edge, edge in/out (erode/dilate the matte), remove colour fringe (desaturate edge pixels
-      toward the new background), optional soft shadow under the subject. Same sliders as vid-ed-mobile's *Edge & shadow*.
+- [x] **Edge tools, part 1**: soften edge and edge in/out (1.12.0; same maths in `refine_matte()` and the shader).
+- [ ] **Edge tools, part 2**: remove colour fringe (desaturate edge pixels toward the new background) and an optional soft
+      shadow under the subject, as vid-ed-mobile's *Edge & shadow*.
 - [ ] **Foreground colour estimation** near the edge so the old background doesn't bleed through as a halo.
 - [ ] **Match the subject to the scene**: optional "harmonise" (shift the subject's mean colour / brightness a little
       toward the new background).
-- [ ] Background controls: position (drag), zoom, flip, optional light blur on the replacement for depth of field.
+- [x] Background controls: zoom and position sliders (1.12.0).
+- [ ] Drag-to-position on the photo, flip, optional light blur on the replacement for depth of field.
 - [ ] Order of operations: colour filters apply to the *subject* before compositing (as in vid-ed-mobile), so a replaced
       background keeps its own colours; grain goes over the whole result so the join disappears.
 
 UI:
 
-- [ ] Background group gets **Original · Blur · Colour · Image · Transparent** as a segmented control; Image shows a
-      thumbnail grid of recent backgrounds plus *Add image* (stored in the browser, IndexedDB, not on the server).
-- [ ] Live compositing runs in the Phase 1 shader using the cached matte, so swapping backgrounds and dragging the
+- [x] Background group has **Blur · Remove · Colour · Photo** as a segmented control; Photo takes one picked image
+      (kept in memory for now).
+- [ ] Recent backgrounds grid stored in the browser (IndexedDB), so a photo survives a reload.
+- [x] Live compositing runs in the Phase 1 shader using the cached matte, so swapping backgrounds and dragging the
       edge sliders is instant. Server render is only for the final export when the browser can't do it.
-- [ ] Presets: add a *Swap background* preset.
+- [ ] Presets: a *Swap background* preset (a preset can't carry the photo, so it would just switch to Photo mode).
 
 **Done when:** pick photo A, pick photo B, get A's subject in front of B with a clean edge in under a second after the
 first matte, and the PNG downloads at full resolution.

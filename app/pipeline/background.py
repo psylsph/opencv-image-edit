@@ -6,6 +6,11 @@ We accept a pre-computed float32 mask (typically the output of
 * ``apply_background_blur`` — sharp foreground, Gaussian-blurred background.
 * ``apply_background_remove`` — foreground over a transparent alpha channel
   (returns BGRA).
+* ``apply_background_replace`` — foreground over a flat colour or another
+  photo (cover-fitted, with edge softening / edge in-out on the matte).
+
+The browser live preview (web/gl.js) mirrors ``cover_rect`` and ``refine_matte``;
+keep them in step (tools/parity/run.py checks it).
 
 The mask is always interpreted as ``alpha``:
   mask == 1.0  → fully foreground (sharp / opaque)
@@ -96,7 +101,9 @@ def background_paint_mask_to_foreground_alpha(
             # Alpha is the most reliable signal for "painted" pixels.
             painted_background_mask = painted_background_mask[:, :, 3]
         else:
-            painted_background_mask = cv2.cvtColor(painted_background_mask[:, :, :3], cv2.COLOR_BGR2GRAY)
+            painted_background_mask = cv2.cvtColor(
+                painted_background_mask[:, :, :3], cv2.COLOR_BGR2GRAY
+            )
 
     painted = painted_background_mask.astype(np.float32)
     if painted.max(initial=0) > 1.0:
@@ -154,3 +161,101 @@ def apply_selection_blur(
     if alpha_ch is not None:
         out = np.dstack([out, alpha_ch])
     return out
+
+
+# ---------------------------------------------------------------------------
+# Replace the background with a colour or another photo
+# ---------------------------------------------------------------------------
+
+#: Blur applied by ``feather`` = 1.0, in pixels at the processed image size.
+FEATHER_MAX_SIGMA = 12.0
+
+
+def cover_rect(
+    bw: int, bh: int, w: int, h: int, zoom: float = 1.0, ox: float = 0.0, oy: float = 0.0
+) -> tuple[float, float, float, float]:
+    """The part of a ``bw`` x ``bh`` photo that fills a ``w`` x ``h`` frame ("cover" fit).
+
+    ``zoom`` >= 1 magnifies; ``ox``/``oy`` in [-1, 1] pan within the slack that is left
+    (0 = centred). Returns ``(x0, y0, width, height)`` in source pixels.
+    """
+    scale = max(w / bw, h / bh) * max(1.0, zoom)
+    vw, vh = w / scale, h / scale
+    ox = min(1.0, max(-1.0, ox))
+    oy = min(1.0, max(-1.0, oy))
+    return (bw - vw) / 2 * (1 + ox), (bh - vh) / 2 * (1 + oy), vw, vh
+
+
+def fit_cover(
+    bg: np.ndarray, w: int, h: int, zoom: float = 1.0, ox: float = 0.0, oy: float = 0.0
+) -> np.ndarray:
+    """Crop + resize ``bg`` (BGR) to exactly ``w`` x ``h`` using :func:`cover_rect`."""
+    bh, bw = bg.shape[:2]
+    x0, y0, vw, vh = cover_rect(bw, bh, w, h, zoom, ox, oy)
+    xa = int(min(max(round(x0), 0), bw - 1))
+    ya = int(min(max(round(y0), 0), bh - 1))
+    xb = int(min(max(round(x0 + vw), xa + 1), bw))
+    yb = int(min(max(round(y0 + vh), ya + 1), bh))
+    crop = bg[ya:yb, xa:xb]
+    shrinking = (xb - xa) > w or (yb - ya) > h
+    return cv2.resize(crop, (w, h), interpolation=cv2.INTER_AREA if shrinking else cv2.INTER_CUBIC)
+
+
+def refine_matte(mask: np.ndarray, feather: float = 0.0, shrink: float = 0.0) -> np.ndarray:
+    """Soften and move the matte's edge. Both 0 = unchanged.
+
+    ``feather`` in [0, 1]: gaussian blur of up to ``FEATHER_MAX_SIGMA`` px.
+    ``shrink`` in [-1, 1]: > 0 pulls the edge in, < 0 pushes it out (a levels adjustment, so
+    it also tightens or loosens the soft edge).
+    """
+    out = mask.astype(np.float32)
+    if feather > 0:
+        out = cv2.GaussianBlur(out, (0, 0), sigmaX=max(0.3, feather * FEATHER_MAX_SIGMA))
+    if shrink > 0:
+        s = 0.5 * min(1.0, shrink)
+        out = (out - s) / (1.0 - s)
+    elif shrink < 0:
+        s = 0.5 * max(-1.0, shrink)
+        out = out / (1.0 + s)
+    return np.clip(out, 0.0, 1.0)
+
+
+def hex_to_bgr(color: str) -> tuple[int, int, int]:
+    """``'#rrggbb'`` -> ``(b, g, r)``."""
+    c = color.lstrip("#")
+    return int(c[4:6], 16), int(c[2:4], 16), int(c[0:2], 16)
+
+
+def apply_background_replace(
+    img_bgr: np.ndarray,
+    mask: np.ndarray,
+    *,
+    color: str | None = None,
+    background: np.ndarray | None = None,
+    zoom: float = 1.0,
+    offset_x: float = 0.0,
+    offset_y: float = 0.0,
+    feather: float = 0.0,
+    shrink: float = 0.0,
+) -> np.ndarray:
+    """Put the subject (``mask`` = 1) over a flat ``color`` or a photo (``background``, BGR/BGRA).
+
+    Exactly one of ``color`` / ``background`` must be given. Returns BGR uint8 at the size of
+    ``img_bgr``.
+    """
+    if (color is None) == (background is None):
+        raise ValueError("give exactly one of color or background")
+    if img_bgr.ndim == 2:
+        img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_GRAY2BGR)
+    h, w = img_bgr.shape[:2]
+    mask = refine_matte(_resize_mask_to_image(mask, img_bgr.shape), feather, shrink)
+    if background is not None:
+        if background.ndim == 2:
+            background = cv2.cvtColor(background, cv2.COLOR_GRAY2BGR)
+        bg = fit_cover(background[:, :, :3], w, h, zoom, offset_x, offset_y)
+    else:
+        bg = np.empty_like(img_bgr[:, :, :3])
+        bg[:] = hex_to_bgr(color)
+    alpha = mask[:, :, np.newaxis]
+    out = img_bgr[:, :, :3].astype(np.float32) * alpha + bg.astype(np.float32) * (1.0 - alpha)
+    return np.clip(out + 0.5, 0, 255).astype(np.uint8)

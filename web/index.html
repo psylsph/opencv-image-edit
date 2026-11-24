@@ -12,7 +12,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="style.css?v=23" />
+  <link rel="stylesheet" href="style.css?v=24" />
 </head>
 <body>
   <main class="app">
@@ -92,6 +92,8 @@
             <legend class="sr-only">Background mode</legend>
             <label><input type="radio" name="bg-mode" value="blur" checked /><span>Blur</span></label>
             <label><input type="radio" name="bg-mode" value="remove" /><span>Remove</span></label>
+            <label><input type="radio" name="bg-mode" value="color" /><span>Colour</span></label>
+            <label><input type="radio" name="bg-mode" value="image" /><span>Photo</span></label>
           </fieldset>
           <fieldset class="segmented" id="bg-source">
             <legend class="sr-only">Background selection</legend>
@@ -109,6 +111,39 @@
             <span>Blur strength <output id="blur-value">15</output></span>
             <input type="range" id="blur-strength" min="1" max="50" value="15" />
           </label>
+          <div id="bg-replace" hidden>
+            <div id="bg-color-row" class="bg-color-row" hidden>
+              <div class="swatches" id="bg-swatches" role="group" aria-label="Background colour"></div>
+              <input type="color" id="bg-color" value="#00b140" aria-label="Custom background colour" />
+            </div>
+            <div id="bg-image-row" class="bg-image-row" hidden>
+              <button id="bg-image-btn" class="btn btn-secondary" type="button">🖼️ Choose background photo</button>
+              <img id="bg-image-thumb" alt="Chosen background" hidden />
+              <input id="bg-image-input" type="file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif" hidden />
+            </div>
+            <div id="bg-image-adjust" hidden>
+              <label class="slider-row">
+                <span>Zoom <output id="bg-zoom-value">1.00</output></span>
+                <input type="range" id="bg-zoom" min="1" max="3" step="0.05" value="1" />
+              </label>
+              <label class="slider-row">
+                <span>Move left / right <output id="bg-x-value">0.00</output></span>
+                <input type="range" id="bg-x" min="-1" max="1" step="0.05" value="0" />
+              </label>
+              <label class="slider-row">
+                <span>Move up / down <output id="bg-y-value">0.00</output></span>
+                <input type="range" id="bg-y" min="-1" max="1" step="0.05" value="0" />
+              </label>
+            </div>
+            <label class="slider-row">
+              <span>Soften edge <output id="bg-feather-value">0.00</output></span>
+              <input type="range" id="bg-feather" min="0" max="1" step="0.05" value="0" />
+            </label>
+            <label class="slider-row">
+              <span>Edge in / out <output id="bg-shrink-value">0.00</output></span>
+              <input type="range" id="bg-shrink" min="-1" max="1" step="0.05" value="0" />
+            </label>
+          </div>
         </div>
       </details>
 
@@ -328,6 +363,6 @@
     </button>
   </nav>
 
-  <script type="module" src="app.js?v=33"></script>
+  <script type="module" src="app.js?v=34"></script>
 </body>
 </html>

@@ -62,23 +62,38 @@ void main() {
   o = vec4(c, 1.0);
 }`;
 
-// Background: subject over (blurred copy | checkerboard for "remove"), using the server's matte.
+// Background: subject over a blurred copy, a checkerboard ("remove" preview), a flat colour or another photo.
+// Colour/photo modes also refine the matte like the server's refine_matte(): optional pre-blurred matte (feather),
+// then a levels adjustment (shrink: > 0 edge in, < 0 edge out).
 const FRAG_BG = `#version 300 es
 precision highp float;
-uniform sampler2D uSrc, uBlur, uMask;
-uniform float uMode;   // 0 = blur, 1 = remove (shown over a checkerboard)
+uniform sampler2D uSrc, uBlur, uMask, uBgImg;
+uniform float uMode;   // 0 blur, 1 remove, 2 colour, 3 photo
+uniform float uShrink, uUseBlurMask;
+uniform vec3 uColor;
+uniform vec4 uRect;    // visible part of the photo: x, y, w, h as fractions (y from the top)
 uniform vec2 uSize;
 in vec2 uv;
 out vec4 o;
 void main() {
+  vec2 f = vec2(uv.x, 1.0 - uv.y);   // uBlur was rendered, so its rows run the other way
   vec3 s = texture(uSrc, uv).rgb;
-  float m = texture(uMask, uv).r;
+  float m = (uMode > 1.5 && uUseBlurMask > 0.5) ? texture(uBlur, f).r : texture(uMask, uv).r;
   vec3 bg;
-  if (uMode > 0.5) {
+  if (uMode > 2.5) {
+    bg = texture(uBgImg, uRect.xy + uv * uRect.zw).rgb;
+  } else if (uMode > 1.5) {
+    bg = uColor;
+  } else if (uMode > 0.5) {
     vec2 g = floor(uv * uSize / 16.0);
     bg = vec3(mix(0.80, 0.62, mod(g.x + g.y, 2.0)));
   } else {
-    bg = texture(uBlur, vec2(uv.x, 1.0 - uv.y)).rgb;  // uBlur was rendered, so its rows run the other way
+    bg = texture(uBlur, f).rgb;
+  }
+  if (uMode > 1.5) {
+    if (uShrink > 0.0) { float k = 0.5 * uShrink; m = (m - k) / (1.0 - k); }
+    else if (uShrink < 0.0) { float k = 0.5 * uShrink; m = m / (1.0 + k); }
+    m = clamp(m, 0.0, 1.0);
   }
   o = vec4(mix(bg, s, m), 1.0);
 }`;
@@ -136,8 +151,19 @@ export function liveParams(settings) {
   const f = settings.filters || {};
   const fOn = !!f.enabled;
   const b = settings.background || {};
+  const modes = ["blur", "remove", "color", "image"];
+  const bg = !b.enabled ? null : {
+    mode: modes.includes(b.mode) ? b.mode : "blur",
+    strength: Math.max(1, Number(b.blur_strength) || 15),
+    color: /^#[0-9a-f]{6}$/i.test(b.color || "") ? b.color : "#00b140",
+    zoom: Math.max(1, Number(b.zoom) || 1),
+    offsetX: Math.min(1, Math.max(-1, Number(b.offset_x) || 0)),
+    offsetY: Math.min(1, Math.max(-1, Number(b.offset_y) || 0)),
+    feather: Math.min(1, Math.max(0, Number(b.feather) || 0)),
+    shrink: Math.min(1, Math.max(-1, Number(b.shrink) || 0)),
+  };
   return {
-    bg: b.enabled ? { mode: b.mode === "remove" ? "remove" : "blur", strength: Math.max(1, Number(b.blur_strength) || 15) } : null,
+    bg,
     grain: g.enabled ? Math.max(0, Number(g.intensity) || 0) : 0,
     brightness: fOn ? Number(f.brightness) : 1,
     contrast: fOn ? Number(f.contrast) : 1,
@@ -172,6 +198,18 @@ export async function loadSource(blob, max = MAX_SOURCE) {
   return { source: cv, width, height };
 }
 
+/** Mirror of app/pipeline/background.py cover_rect(): the visible part of a bw x bh photo in a w x h frame. */
+export function coverRect(bw, bh, w, h, zoom = 1, ox = 0, oy = 0) {
+  const scale = Math.max(w / bw, h / bh) * Math.max(1, zoom);
+  const vw = w / scale;
+  const vh = h / scale;
+  const cx = Math.min(1, Math.max(-1, ox));
+  const cy = Math.min(1, Math.max(-1, oy));
+  return [((bw - vw) / 2) * (1 + cx), ((bh - vh) / 2) * (1 + cy), vw, vh];
+}
+
+const hexToRgb = (c) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16) / 255);
+
 /**
  * Create a renderer on `canvas`. Returns null when WebGL2 or the shaders aren't available
  * (callers keep showing the plain <img> and the server path does the work).
@@ -200,6 +238,8 @@ export function createRenderer(canvas, onError = () => {}) {
   let srcTex = null;
   let src = null;      // {source, width, height} so a lost context can be rebuilt
   let lost = false;
+  let bgTex = null;
+  let bgImage = null;  // {source,width,height} of the replacement photo
   let maskTex = null;
   let maskSrc = null;  // kept so a lost context can rebuild the texture
   const targets = []; // four render targets at output size
@@ -234,6 +274,21 @@ export function createRenderer(canvas, onError = () => {}) {
     small.length = 0;
     for (let i = 0; i < 2; i++) small.push(makeTarget(w, h));
     sw = w; sh = h;
+  }
+
+  function uploadBgImage() {
+    if (bgTex) gl.deleteTexture(bgTex);
+    bgTex = null;
+    if (!bgImage) return;
+    bgTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, bgTex);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bgImage.source);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   }
 
   function uploadMask() {
@@ -300,6 +355,7 @@ export function createRenderer(canvas, onError = () => {}) {
     targets.length = 0; small.length = 0; tw = th = sw = sh = 0;
     if (src) uploadSource();
     uploadMask();
+    uploadBgImage();
     lost = false;
     api.onrestored?.();
   });
@@ -325,6 +381,15 @@ export function createRenderer(canvas, onError = () => {}) {
 
     get hasMask() { return !!maskSrc; },
 
+    /** Set (or clear with null) the replacement photo ({source, width, height} from loadSource). */
+    setBackgroundImage(image) {
+      if (bgImage && bgImage !== image) bgImage.source.close?.();
+      bgImage = image;
+      if (!lost) uploadBgImage();
+    },
+
+    get hasBackgroundImage() { return !!bgImage; },
+
     /** Draw `params` (from liveParams) at `w`x`h` canvas pixels. */
     draw(params, w, h) {
       if (lost || !src) return false;
@@ -342,25 +407,45 @@ export function createRenderer(canvas, onError = () => {}) {
       // Background (needs the matte): the server blurs with sigma = strength px at its processing size.
       let input = srcTex;
       let inputFlip = 1;
-      if (params.bg && maskTex) {
+      const replacing = params.bg && (params.bg.mode === "color" || params.bg.mode === "image");
+      if (params.bg && maskTex && (!replacing || params.bg.mode === "color" || bgTex)) {
+        const bgp = params.bg;
         let blurTex = null;
-        if (params.bg.mode === "blur") {
-          const sigma = Math.max(0.3, (params.bg.strength * w) / serverW);
-          const f = Math.max(1, sigma / 5); // big blurs run on a smaller copy (much cheaper, looks the same)
+        let useBlurMask = 0;
+        // Blurs run on a smaller copy when big (much cheaper, looks the same).
+        const smallBlur = (from, sigma, flip) => {
+          const f = Math.max(1, sigma / 5);
           const bw = Math.max(1, Math.round(w / f));
           const bh = Math.max(1, Math.round(h / f));
           ensureSmall(bw, bh);
-          blurPass(srcTex, small[0], 1, 0, sigma / f, 1, bw, bh);
+          blurPass(from, small[0], 1, 0, sigma / f, flip, bw, bh);
           blurPass(small[0].tex, small[1], 0, 1, sigma / f, 0, bw, bh);
-          blurTex = small[1].tex;
+          return small[1].tex;
+        };
+        if (bgp.mode === "blur") {
+          blurTex = smallBlur(srcTex, Math.max(0.3, (bgp.strength * w) / serverW), 1);
+        } else if (replacing && bgp.feather > 0) {
+          blurTex = smallBlur(maskTex, Math.max(0.3, (bgp.feather * 12 * w) / serverW), 1);
+          useBlurMask = 1;
         }
-        pass(progs.bg, D, [srcTex, blurTex || srcTex, maskTex], (u) => {
+        const rect = bgp.mode === "image"
+          ? coverRect(bgImage.width, bgImage.height, w, h, bgp.zoom, bgp.offsetX, bgp.offsetY)
+          : [0, 0, 1, 1];
+        const bgw = bgImage ? bgImage.width : 1;
+        const bgh = bgImage ? bgImage.height : 1;
+        pass(progs.bg, D, [srcTex, blurTex || srcTex, maskTex, bgTex || srcTex], (u) => {
           u("uFlip", 1);
-          u("uMode", params.bg.mode === "remove" ? 1 : 0);
+          u("uMode", { blur: 0, remove: 1, color: 2, image: 3 }[bgp.mode]);
           u("uSize", w, h);
-          gl.uniform1i(gl.getUniformLocation(progs.bg.id, "uSrc"), 0);
-          gl.uniform1i(gl.getUniformLocation(progs.bg.id, "uBlur"), 1);
-          gl.uniform1i(gl.getUniformLocation(progs.bg.id, "uMask"), 2);
+          u("uShrink", bgp.shrink);
+          u("uUseBlurMask", useBlurMask);
+          const loc = (n) => gl.getUniformLocation(progs.bg.id, n);
+          gl.uniform3fv(loc("uColor"), hexToRgb(bgp.color));
+          gl.uniform4f(loc("uRect"), rect[0] / bgw, rect[1] / bgh, rect[2] / bgw, rect[3] / bgh);
+          gl.uniform1i(loc("uSrc"), 0);
+          gl.uniform1i(loc("uBlur"), 1);
+          gl.uniform1i(loc("uMask"), 2);
+          gl.uniform1i(loc("uBgImg"), 3);
         });
         input = D.tex;
         inputFlip = 0;
@@ -401,6 +486,8 @@ export function createRenderer(canvas, onError = () => {}) {
       src = null;
       maskSrc?.close?.();
       maskSrc = null;
+      bgImage?.source?.close?.();
+      bgImage = null;
       gl.getExtension("WEBGL_lose_context")?.loseContext();
     },
   };

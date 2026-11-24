@@ -35,12 +35,14 @@ async def process(
     file: UploadFile = File(...),
     settings: str = Form(...),
     background_mask: UploadFile | None = File(default=None),
+    background_image: UploadFile | None = File(default=None),
 ) -> dict:
     """Process an uploaded image through the pipeline.
 
     Args:
         file: image file (PNG, JPEG, WebP, HEIC).
         settings: JSON-encoded ProcessRequest.
+        background_image: replacement background, required when ``background.mode`` is ``image``.
 
     Returns:
         JSON with base64-encoded PNGs for final + 5 debug outputs.
@@ -67,10 +69,24 @@ async def process(
             image_process_total.labels(status="decode_error").inc()
             raise HTTPException(status_code=400, detail=f"invalid background mask: {exc}") from exc
 
+    bg_image = None
+    if req.background.enabled and req.background.mode == "image":
+        if background_image is None:
+            raise HTTPException(
+                status_code=422, detail="background mode 'image' needs a background_image file"
+            )
+        try:
+            bg_image = decode_to_bgr(await read_image_bytes(background_image))
+        except DecodeError as exc:
+            image_process_total.labels(status="decode_error").inc()
+            raise HTTPException(status_code=400, detail=f"invalid background image: {exc}") from exc
+
     started = time.perf_counter()
     status = "ok"
     try:
-        result: ProcessResult = process_pipeline(img_bgr, req, background_mask=bg_mask_img)
+        result: ProcessResult = process_pipeline(
+            img_bgr, req, background_mask=bg_mask_img, background_image=bg_image
+        )
     except ProcessingError as exc:
         status = "processing_error"
         image_process_total.labels(status=status).inc()

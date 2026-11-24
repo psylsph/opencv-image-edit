@@ -20,6 +20,7 @@ from app.models.painting import apply_paint_style
 from app.pipeline.background import (
     apply_background_blur,
     apply_background_remove,
+    apply_background_replace,
     background_paint_mask_to_foreground_alpha,
     get_alpha_debug,
 )
@@ -52,6 +53,7 @@ def process_pipeline(
     img_bgr: np.ndarray,
     request: ProcessRequest,
     background_mask: Optional[np.ndarray] = None,
+    background_image: Optional[np.ndarray] = None,
 ) -> ProcessResult:
     """Run the full processing pipeline.
 
@@ -60,6 +62,7 @@ def process_pipeline(
         request: validated ProcessRequest specifying which stages to run.
         background_mask: optional user-painted mask where non-zero pixels are
             explicitly background. Used instead of AI matting when provided.
+        background_image: BGR photo for ``background.mode == "image"``.
 
     Returns:
         ProcessResult with the final image plus debug visualizations.
@@ -85,6 +88,21 @@ def process_pipeline(
             mask_debug = get_alpha_debug(mask)
             if request.background.mode == "blur":
                 current = apply_background_blur(current, mask, request.background.blur_strength)
+            elif request.background.mode in ("color", "image"):
+                bg = request.background
+                if bg.mode == "image" and background_image is None:
+                    raise ProcessingError("background mode 'image' needs a background image")
+                current = apply_background_replace(
+                    current,
+                    mask,
+                    color=bg.color if bg.mode == "color" else None,
+                    background=background_image if bg.mode == "image" else None,
+                    zoom=bg.zoom,
+                    offset_x=bg.offset_x,
+                    offset_y=bg.offset_y,
+                    feather=bg.feather,
+                    shrink=bg.shrink,
+                )
             else:  # remove
                 current = apply_background_remove(current, mask)
 

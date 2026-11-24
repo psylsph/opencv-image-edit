@@ -578,3 +578,67 @@ class TestMatteEndpoint:
             data={"model_name": "nope"},
         )
         assert r.status_code >= 400
+
+
+class TestReplaceBackgroundEndpoint:
+    """``POST /api/v1/process`` with background mode ``color`` / ``image`` (matting stubbed)."""
+
+    @staticmethod
+    def _png(arr):
+        return cv2.imencode(".png", arr)[1].tobytes()
+
+    @pytest.fixture(autouse=True)
+    def _stub_matting(self, monkeypatch):
+        class Stub:
+            def predict(self, img):
+                m = np.zeros(img.shape[:2], np.float32)
+                m[:, : img.shape[1] // 2] = 1.0  # left half is the subject
+                return m
+
+        monkeypatch.setattr("app.pipeline.get_matting_model", lambda name: Stub())
+
+    def _post(self, test_client, bg, files_extra=None):
+        img = np.full((40, 60, 3), (10, 20, 30), np.uint8)
+        files = {"file": ("a.png", self._png(img), "image/png")}
+        files.update(files_extra or {})
+        settings = {"background": {"enabled": True, **bg}}
+        return test_client.post(
+            "/api/v1/process", files=files, data={"settings": json.dumps(settings)}
+        )
+
+    @staticmethod
+    def _final(resp):
+        import base64
+
+        raw = base64.b64decode(resp.json()["final"].split(",", 1)[1])
+        return cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
+
+    def test_colour_background(self, test_client: TestClient):
+        r = self._post(test_client, {"mode": "color", "color": "#0000ff"})
+        assert r.status_code == 200
+        out = self._final(r)
+        assert tuple(out[20, 5]) == (10, 20, 30) and tuple(out[20, 55]) == (255, 0, 0)
+
+    def test_image_background(self, test_client: TestClient):
+        bg = np.full((90, 90, 3), (200, 100, 50), np.uint8)
+        r = self._post(
+            test_client,
+            {"mode": "image"},
+            {"background_image": ("b.png", self._png(bg), "image/png")},
+        )
+        assert r.status_code == 200
+        out = self._final(r)
+        assert tuple(out[20, 55]) == (200, 100, 50)
+
+    def test_image_mode_without_a_file_is_rejected(self, test_client: TestClient):
+        r = self._post(test_client, {"mode": "image"})
+        assert r.status_code == 422
+
+    def test_unreadable_background_image_is_a_400(self, test_client: TestClient):
+        r = self._post(
+            test_client, {"mode": "image"}, {"background_image": ("b.png", b"junk", "image/png")}
+        )
+        assert r.status_code == 400
+
+    def test_bad_colour_is_rejected(self, test_client: TestClient):
+        assert self._post(test_client, {"mode": "color", "color": "red"}).status_code == 422

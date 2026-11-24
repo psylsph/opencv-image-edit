@@ -9,9 +9,16 @@ from pydantic import BaseModel, Field
 
 class BackgroundRequest(BaseModel):
     enabled: bool = False
-    mode: Literal["blur", "remove"] = "blur"
+    mode: Literal["blur", "remove", "color", "image"] = "blur"
     blur_strength: int = Field(default=15, ge=1, le=50)
     model_name: str = "birefnet_tiny"
+    # Replacement background (modes "color" and "image"; "image" needs the ``background_image`` upload).
+    color: str = Field(default="#00b140", pattern=r"^#[0-9a-fA-F]{6}$")
+    zoom: float = Field(default=1.0, ge=1.0, le=4.0)
+    offset_x: float = Field(default=0.0, ge=-1.0, le=1.0)
+    offset_y: float = Field(default=0.0, ge=-1.0, le=1.0)
+    feather: float = Field(default=0.0, ge=0.0, le=1.0)  # soften the subject's edge
+    shrink: float = Field(default=0.0, ge=-1.0, le=1.0)  # > 0 edge in, < 0 edge out
 
 
 class GrainRequest(BaseModel):

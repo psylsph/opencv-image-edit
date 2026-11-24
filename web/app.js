@@ -11,11 +11,15 @@
 
 import { createRenderer, isIdentity, liveParams, loadSource } from "./gl.js";
 
+const BG_SWATCHES = ["#00b140", "#ffffff", "#111111", "#1e6bff", "#ff4fa3", "#ffd23f", "#7c4dff", "#ff7a1a"];
+
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
 const state = {
   file: null,
+  bgFile: null,          // replacement background photo (mode "image"), kept in memory
+  bgThumbUrl: null,
   previewUrl: null,
   presets: {},
   currentPreset: null,
@@ -49,7 +53,10 @@ const state = {
 
 // --- Defaults (used by Reset and on first load) ---
 const DEFAULT_SETTINGS = {
-  background: { enabled: false, mode: "blur", blur_strength: 15, model_name: "birefnet_tiny" },
+  background: {
+    enabled: false, mode: "blur", blur_strength: 15, model_name: "birefnet_tiny",
+    color: "#00b140", zoom: 1, offset_x: 0, offset_y: 0, feather: 0, shrink: 0,
+  },
   grain: { enabled: false, intensity: 0.4 },
   upscale: { enabled: false, scale: 2, algorithm: "interp" },
   filters: {
@@ -169,6 +176,24 @@ function bindEvents() {
   // Background mode: hide blur-strength row when in "remove" mode
   $$("input[name='bg-mode']").forEach((r) => {
     r.addEventListener("change", updateBlurStrengthVisibility);
+  });
+  // Replacement background: swatches, custom colour, photo picker
+  const swatches = $("#bg-swatches");
+  for (const c of BG_SWATCHES) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "swatch";
+    b.style.background = c;
+    b.dataset.color = c;
+    b.setAttribute("aria-label", `Background colour ${c}`);
+    b.addEventListener("click", () => setBgColor(c));
+    swatches.appendChild(b);
+  }
+  $("#bg-color").addEventListener("input", (e) => setBgColor(e.target.value));
+  $("#bg-image-btn").addEventListener("click", () => $("#bg-image-input").click());
+  $("#bg-image-input").addEventListener("change", (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (f) setBgFile(f);
   });
   // Background source: auto matting or manual painted background mask
   $$("input[name='bg-source']").forEach((r) => {
@@ -324,6 +349,11 @@ function bindEvents() {
     ["#saturation", "#saturation-value", (v) => parseFloat(v).toFixed(2)],
     ["#sharpness", "#sharpness-value", (v) => parseFloat(v).toFixed(2)],
     ["#vignette", "#vignette-value", (v) => parseFloat(v).toFixed(2)],
+    ["#bg-zoom", "#bg-zoom-value", (v) => parseFloat(v).toFixed(2)],
+    ["#bg-x", "#bg-x-value", (v) => parseFloat(v).toFixed(2)],
+    ["#bg-y", "#bg-y-value", (v) => parseFloat(v).toFixed(2)],
+    ["#bg-feather", "#bg-feather-value", (v) => parseFloat(v).toFixed(2)],
+    ["#bg-shrink", "#bg-shrink-value", (v) => parseFloat(v).toFixed(2)],
   ];
   sliders.forEach(([slider, output, fmt]) => {
     const s = $(slider), o = $(output);
@@ -401,9 +431,46 @@ function updateFilterControls() {
 function updateBlurStrengthVisibility() {
   const checked = document.querySelector("input[name='bg-mode']:checked");
   if (!checked) return;
-  const remove = checked.value === "remove";
+  const mode = checked.value;
   const row = $("#blur-strength-row");
-  if (row) row.style.display = remove ? "none" : "flex";
+  if (row) row.style.display = mode === "blur" ? "flex" : "none";
+  const replacing = mode === "color" || mode === "image";
+  $("#bg-replace").hidden = !replacing;
+  $("#bg-color-row").hidden = mode !== "color";
+  $("#bg-image-row").hidden = mode !== "image";
+  $("#bg-image-adjust").hidden = mode !== "image" || !state.bgFile;
+}
+
+function setBgColor(c) {
+  $("#bg-color").value = c;
+  $$("#bg-swatches .swatch").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.color === c.toLowerCase())));
+  scheduleLiveDraw();
+}
+
+/** Choose (or clear with null) the replacement background photo. */
+async function setBgFile(file) {
+  state.bgFile = file;
+  if (state.bgThumbUrl) URL.revokeObjectURL(state.bgThumbUrl);
+  state.bgThumbUrl = file ? URL.createObjectURL(file) : null;
+  const thumb = $("#bg-image-thumb");
+  if (state.bgThumbUrl) thumb.src = state.bgThumbUrl; else thumb.removeAttribute("src");
+  thumb.hidden = !file;
+  $("#bg-image-btn").textContent = file ? "🖼️ Change background photo" : "🖼️ Choose background photo";
+  updateBlurStrengthVisibility();
+  await loadBgIntoRenderer();
+}
+
+async function loadBgIntoRenderer() {
+  const r = state.live.renderer;
+  if (!r) return;
+  const file = state.bgFile;
+  try {
+    r.setBackgroundImage(file ? await loadSource(file) : null);
+  } catch (err) {
+    console.warn("background photo can't be previewed on this device (Process still works):", err);
+    r.setBackgroundImage(null);
+  }
+  scheduleLiveDraw();
 }
 
 function isBackgroundPaintActive() {
@@ -591,6 +658,12 @@ function collectSettings() {
       mode: checkedRadio("bg-mode") || "blur",
       blur_strength: parseInt($("#blur-strength").value, 10),
       model_name: $("#bg-model")?.value || "u2netp",
+      color: $("#bg-color").value,
+      zoom: parseFloat($("#bg-zoom").value),
+      offset_x: parseFloat($("#bg-x").value),
+      offset_y: parseFloat($("#bg-y").value),
+      feather: parseFloat($("#bg-feather").value),
+      shrink: parseFloat($("#bg-shrink").value),
     },
     grain: {
       enabled: $("#grain-enabled").checked,
@@ -647,6 +720,11 @@ function applyPreset(name) {
   if (bgSource) bgSource.checked = true;
   const bgModel = $("#bg-model");
   if (bgModel && s.background.model_name) bgModel.value = s.background.model_name;
+  const bgd = { ...DEFAULT_SETTINGS.background, ...s.background };
+  setBgColor(bgd.color);
+  for (const [id, key] of [["bg-zoom", "zoom"], ["bg-x", "offset_x"], ["bg-y", "offset_y"], ["bg-feather", "feather"], ["bg-shrink", "shrink"]]) {
+    setSlider($(`#${id}`), bgd[key], $(`#${id}-value`), (v) => parseFloat(v).toFixed(2));
+  }
   updateBlurStrengthVisibility();
   updateBackgroundMaskControls();
   // Re-fire change handlers to update visual disabled states
@@ -701,6 +779,7 @@ async function startLivePreview(file) {
       if (!state.live.renderer) return;  // no WebGL2: the plain <img> and the server do the work
       state.live.renderer.onlost = () => { canvas.hidden = true; };
       state.live.renderer.onrestored = () => { canvas.hidden = false; scheduleLiveDraw(); };
+      loadBgIntoRenderer();
     }
     const image = await loadSource(file);
     if (token !== state.live.token) { image.source.close?.(); return; }  // a newer photo arrived meanwhile
@@ -1170,6 +1249,16 @@ async function processImage() {
   const formData = new FormData();
   formData.append("file", state.file);
   formData.append("settings", JSON.stringify(settings));
+
+  if (settings.background.enabled && settings.background.mode === "image") {
+    if (!state.bgFile) {
+      setStatus("Choose a background photo first (Background → Photo).", "error");
+      state.processing = false;
+      updateProcessButton();
+      return;
+    }
+    formData.append("background_image", state.bgFile, state.bgFile.name || "background");
+  }
 
   if (isBackgroundPaintActive()) {
     if (!hasPaintMaskContent()) {

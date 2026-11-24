@@ -81,19 +81,13 @@ def get_anime_session(style: str) -> ort.InferenceSession:
 
     mark_model_used()
     if style not in ANIME_STYLES:
-        raise ModelNotFoundError(
-            f"unknown anime style '{style}'; valid: {sorted(ANIME_STYLES)}"
-        )
+        raise ModelNotFoundError(f"unknown anime style '{style}'; valid: {sorted(ANIME_STYLES)}")
     with _LOCK:
         if style not in _SESSIONS:
             path = _MODELS_DIR / ANIME_STYLES[style].filename
             if not path.exists():
-                raise ModelNotFoundError(
-                    f"model file not found: {path} (download it into models/)"
-                )
-            _SESSIONS[style] = ort.InferenceSession(
-                str(path), providers=["CPUExecutionProvider"]
-            )
+                raise ModelNotFoundError(f"model file not found: {path} (download it into models/)")
+            _SESSIONS[style] = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
         return _SESSIONS[style]
 
 

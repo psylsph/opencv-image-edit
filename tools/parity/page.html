@@ -2,21 +2,34 @@
 <meta charset="utf-8">
 <pre id="out">pending</pre>
 <script type="module">
-// Parity page: renders ?img=<url> (and optional ?mask=<url>) with settings ?s=<json> through web/gl.js and prints the PNG as a data URL.
+// Parity page: renders every case listed in ?cases=<url of a JSON file> through web/gl.js, in one browser start.
+//   cases.json: {name: {settings: <form settings>, mask: <url|null>, bg: <url|null>}}, photo: ?img=<url>
+// Prints {name: "data:image/png;base64,..." | "ERROR ..."} as JSON.
 import { createRenderer, liveParams, loadSource } from "/web/gl.js";
 const q = new URLSearchParams(location.search);
 const out = document.getElementById("out");
+const blobOf = async (url) => (await fetch(url)).blob();
 try {
-  const blob = await (await fetch(q.get("img"))).blob();
+  const cases = await (await fetch(q.get("cases"))).json();
+  const photo = await blobOf(q.get("img"));
   const cv = document.createElement("canvas");
   const r = createRenderer(cv, (m, e) => { throw e; });
   if (!r) throw new Error("no webgl2");
-  const image = await loadSource(blob);
-  r.setImage(image);
-  if (q.get("mask")) r.setMask(await createImageBitmap(await (await fetch(q.get("mask"))).blob()));
-  r.draw(liveParams(JSON.parse(q.get("s"))), image.source.width, image.source.height);
-  out.textContent = cv.toDataURL("image/png"); // same task as draw(): the drawing buffer is still there
+  const results = {};
+  for (const [name, c] of Object.entries(cases)) {
+    try {
+      const image = await loadSource(photo);
+      r.setImage(image);
+      r.setMask(c.mask ? await createImageBitmap(await blobOf(c.mask)) : null);
+      r.setBackgroundImage(c.bg ? await loadSource(await blobOf(c.bg)) : null);
+      r.draw(liveParams(c.settings), image.source.width, image.source.height);
+      results[name] = cv.toDataURL("image/png"); // same task as draw(): the drawing buffer is still there
+    } catch (e) {
+      results[name] = "ERROR " + e.message;
+    }
+  }
+  out.textContent = JSON.stringify(results);
 } catch (e) {
-  out.textContent = "ERROR " + e.message;
+  out.textContent = JSON.stringify({ __error: String(e.message || e) });
 }
 </script>

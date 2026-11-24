@@ -62,8 +62,8 @@ from app.config import get_settings
 
 _MODELS_DIR = Path(get_settings().model_dir)
 
-_TILE = 224          # network input size (fixed)
-_OVERLAP = 32        # pixels of overlap between tiles
+_TILE = 224  # network input size (fixed)
+_OVERLAP = 32  # pixels of overlap between tiles
 
 
 def get_paint_session(style: str) -> ort.InferenceSession:
@@ -72,19 +72,13 @@ def get_paint_session(style: str) -> ort.InferenceSession:
 
     mark_model_used()
     if style not in PAINT_STYLES:
-        raise ModelNotFoundError(
-            f"unknown painting style '{style}'; valid: {sorted(PAINT_STYLES)}"
-        )
+        raise ModelNotFoundError(f"unknown painting style '{style}'; valid: {sorted(PAINT_STYLES)}")
     with _LOCK:
         if style not in _SESSIONS:
             path = _MODELS_DIR / PAINT_STYLES[style].filename
             if not path.exists():
-                raise ModelNotFoundError(
-                    f"model file not found: {path} (download it into models/)"
-                )
-            _SESSIONS[style] = ort.InferenceSession(
-                str(path), providers=["CPUExecutionProvider"]
-            )
+                raise ModelNotFoundError(f"model file not found: {path} (download it into models/)")
+            _SESSIONS[style] = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
         return _SESSIONS[style]
 
 
@@ -128,9 +122,7 @@ def apply_paint_style(img: np.ndarray, style: str) -> np.ndarray:
     # Small images: pad up to one tile, stylise, crop back
     if h <= _TILE and w <= _TILE:
         pw, ph = max(w, _TILE), max(h, _TILE)
-        padded = cv2.copyMakeBorder(
-            bgr, 0, ph - h, 0, pw - w, cv2.BORDER_REFLECT_101
-        )
+        padded = cv2.copyMakeBorder(bgr, 0, ph - h, 0, pw - w, cv2.BORDER_REFLECT_101)
         out = _run_tile(session, padded[:_TILE, :_TILE])
         return out[:h, :w].copy()
 

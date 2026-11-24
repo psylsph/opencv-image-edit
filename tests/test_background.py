@@ -314,3 +314,106 @@ def test_selection_blur_selection_vs_outside():
     outside = apply_selection_blur(img, sel, 5, "outside", feather=0)
     assert np.array_equal(outside[:, :15], img[:, :15])
     assert not np.array_equal(outside[:, 25:], img[:, 25:])
+
+
+# ---------------------------------------------------------------------------
+# Replace the background (colour / another photo)
+# ---------------------------------------------------------------------------
+
+
+class TestCoverFit:
+    def test_same_aspect_uses_the_whole_photo(self):
+        from app.pipeline.background import cover_rect
+
+        assert cover_rect(400, 300, 200, 150) == (0.0, 0.0, 400.0, 300.0)
+
+    def test_wider_photo_is_cropped_at_the_sides_and_centred(self):
+        from app.pipeline.background import cover_rect
+
+        x0, y0, vw, vh = cover_rect(800, 300, 200, 150)
+        assert (y0, vh) == (0.0, 300.0)
+        assert vw == pytest.approx(400.0) and x0 == pytest.approx(200.0)
+
+    def test_zoom_and_pan(self):
+        from app.pipeline.background import cover_rect
+
+        x0, _, vw, _ = cover_rect(400, 300, 200, 150, zoom=2.0)
+        assert vw == pytest.approx(200.0) and x0 == pytest.approx(100.0)  # centred
+        assert cover_rect(400, 300, 200, 150, zoom=2.0, ox=-1.0)[0] == pytest.approx(0.0)
+        assert cover_rect(400, 300, 200, 150, zoom=2.0, ox=1.0)[0] == pytest.approx(200.0)
+
+    def test_fit_cover_returns_exact_size_and_pans(self):
+        from app.pipeline.background import fit_cover
+
+        bg = np.zeros((100, 400, 3), np.uint8)
+        bg[:, :50] = (255, 0, 0)  # blue strip on the left
+        assert fit_cover(bg, 50, 50).shape == (50, 50, 3)
+        left = fit_cover(bg, 50, 50, zoom=1.0, ox=-1.0)
+        assert left[25, 5, 0] == 255 and left[25, 45, 0] == 0
+        right = fit_cover(bg, 50, 50, zoom=1.0, ox=1.0)
+        assert right[:, :, 0].max() == 0
+
+
+class TestRefineMatte:
+    def _edge(self):
+        m = np.zeros((40, 80), np.float32)
+        m[:, 40:] = 1.0
+        return m
+
+    def test_zero_is_identity(self):
+        from app.pipeline.background import refine_matte
+
+        m = self._edge()
+        assert np.array_equal(refine_matte(m), m)
+
+    def test_feather_softens_the_edge(self):
+        from app.pipeline.background import refine_matte
+
+        out = refine_matte(self._edge(), feather=1.0)
+        assert 0.05 < out[20, 38] < 0.5 < out[20, 41] < 0.95
+
+    def test_shrink_moves_the_edge_in_and_negative_out(self):
+        from app.pipeline.background import refine_matte
+
+        soft = refine_matte(self._edge(), feather=1.0)
+        assert (
+            refine_matte(soft, shrink=0.8).sum()
+            < soft.sum()
+            < refine_matte(soft, shrink=-0.8).sum()
+        )
+        assert refine_matte(soft, shrink=1.0).min() == 0.0
+
+
+class TestReplaceBackground:
+    def _inputs(self):
+        img = np.full((20, 30, 3), (10, 20, 30), np.uint8)
+        mask = np.zeros((20, 30), np.float32)
+        mask[:, :15] = 1.0
+        return img, mask
+
+    def test_colour(self):
+        from app.pipeline.background import apply_background_replace
+
+        img, mask = self._inputs()
+        out = apply_background_replace(img, mask, color="#ff0000")
+        assert out.shape == img.shape
+        assert tuple(out[5, 3]) == (10, 20, 30)  # subject untouched
+        assert tuple(out[5, 25]) == (0, 0, 255)  # red in BGR
+
+    def test_photo_background_is_fitted_to_the_subject_photo(self):
+        from app.pipeline.background import apply_background_replace
+
+        img, mask = self._inputs()
+        bg = np.full((100, 100, 3), (200, 100, 50), np.uint8)
+        out = apply_background_replace(img, mask, background=bg)
+        assert out.shape == img.shape
+        assert tuple(out[5, 25]) == (200, 100, 50) and tuple(out[5, 3]) == (10, 20, 30)
+
+    def test_needs_exactly_one_source(self):
+        from app.pipeline.background import apply_background_replace
+
+        img, mask = self._inputs()
+        with pytest.raises(ValueError):
+            apply_background_replace(img, mask)
+        with pytest.raises(ValueError):
+            apply_background_replace(img, mask, color="#000000", background=img)
