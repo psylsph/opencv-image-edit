@@ -75,7 +75,7 @@ MATTING_MODELS: dict[str, MattingModelInfo] = {
     ),
 }
 
-DEFAULT_MODEL = "birefnet_tiny"
+DEFAULT_MODEL = "u2netp"
 
 
 def available_models(model_dir: Path | str | None = None) -> list[dict]:

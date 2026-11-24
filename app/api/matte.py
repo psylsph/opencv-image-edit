@@ -27,7 +27,7 @@ router = APIRouter()
 @router.post("/api/v1/matte")
 async def matte(
     file: UploadFile = File(...),
-    model_name: str = Form("birefnet_tiny"),
+    model_name: str = Form("u2netp"),
 ) -> Response:
     """Return the foreground matte as an 8-bit grayscale PNG (255 = subject, 0 = background).
 

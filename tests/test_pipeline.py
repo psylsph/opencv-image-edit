@@ -338,7 +338,7 @@ def test_pipeline_background_request_default_factory():
     bg = BackgroundRequest()
     assert bg.mode == "blur"
     assert bg.blur_strength == 15
-    assert bg.model_name == "birefnet_tiny"
+    assert bg.model_name == "u2netp"
 
 
 def test_pipeline_upscale_request_default_factory():

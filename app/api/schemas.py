@@ -11,7 +11,7 @@ class BackgroundRequest(BaseModel):
     enabled: bool = False
     mode: Literal["blur", "remove", "color", "image"] = "blur"
     blur_strength: int = Field(default=15, ge=1, le=50)
-    model_name: str = "birefnet_tiny"
+    model_name: str = "u2netp"
     # Replacement background (modes "color" and "image"; "image" needs the ``background_image`` upload).
     color: str = Field(default="#00b140", pattern=r"^#[0-9a-fA-F]{6}$")
     zoom: float = Field(default=1.0, ge=1.0, le=4.0)

@@ -54,7 +54,7 @@ const state = {
 // --- Defaults (used by Reset and on first load) ---
 const DEFAULT_SETTINGS = {
   background: {
-    enabled: false, mode: "blur", blur_strength: 15, model_name: "birefnet_tiny",
+    enabled: false, mode: "blur", blur_strength: 15, model_name: "u2netp",
     color: "#00b140", zoom: 1, offset_x: 0, offset_y: 0, feather: 0, shrink: 0,
   },
   grain: { enabled: false, intensity: 0.4 },
@@ -98,7 +98,7 @@ async function loadModels() {
       }
       select.appendChild(opt);
     }
-    select.value = "birefnet_tiny";
+    select.value = "u2netp";
     select.disabled = false;
   } catch (err) {
     console.error("Failed to load models:", err);
@@ -845,6 +845,8 @@ async function syncMatte() {
   if (live.matteKey === key || live.matteBusy === key || live.matteFailed === key) return;
   live.matteBusy = key;
   const token = live.token;
+  const slow = ($("#bg-model")?.value || "u2netp") !== "u2netp";
+  setStatus(slow ? "Finding the subject… the best-quality model can take 20 s or more." : "Finding the subject…");
   try {
     const form = new FormData();
     form.append("file", state.file);
@@ -856,9 +858,11 @@ async function syncMatte() {
     if (token !== live.token || live.matteBusy !== key) { bmp.close?.(); return; }  // photo or model changed meanwhile
     live.renderer.setMask(bmp);
     live.matteKey = key;
-    live.matteBlob = matteBlob;  // Process sends it back so the server doesn't run the model a second time
+    live.matteBlob = matteBlob;
+    setStatus("");  // Process sends it back so the server doesn't run the model a second time
   } catch (err) {
     console.warn("matte unavailable, background applies on Process:", err);
+    setStatus(`Couldn't find the subject (${err.message}). Tap Process to apply the background on the server.`, "error");
     if (token === live.token) live.matteFailed = key;
   } finally {
     if (live.matteBusy === key) live.matteBusy = null;
