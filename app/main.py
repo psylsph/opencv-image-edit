@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from app.api import blur, health, inpaint, matte, models, presets, process, segment
+from app.api import blur, faces, health, inpaint, matte, models, presets, process, segment
 from app.config import get_settings
 from app.exceptions import AppError
 from app.monitoring import metrics_response, start_metrics_server
@@ -49,6 +49,7 @@ def create_app() -> FastAPI:
     app.include_router(blur.router)
     app.include_router(segment.router)
     app.include_router(matte.router)
+    app.include_router(faces.router)
     app.include_router(models.router)
 
     # Metrics

@@ -1,6 +1,6 @@
 """Image processing pipeline orchestrator.
 
-Chains stages in fixed order: pre-process → background → grain → upscale → filters.
+Chains stages in fixed order: pre-process → face → background → grain → upscale → filters.
 Each stage can be individually enabled/disabled via the ProcessRequest.
 """
 
@@ -13,7 +13,7 @@ import numpy as np
 
 from app.api.schemas import ProcessRequest
 from app.config import get_settings
-from app.exceptions import ProcessingError
+from app.exceptions import ProcessingError, ValidationError
 from app.models.matting import get_matting_model
 from app.models.anime import apply_anime_style
 from app.models.painting import apply_paint_style
@@ -55,6 +55,7 @@ def process_pipeline(
     background_mask: Optional[np.ndarray] = None,
     background_image: Optional[np.ndarray] = None,
     matte: Optional[np.ndarray] = None,
+    face_donor: Optional[np.ndarray] = None,
 ) -> ProcessResult:
     """Run the full processing pipeline.
 
@@ -64,6 +65,7 @@ def process_pipeline(
         background_mask: optional user-painted mask where non-zero pixels are
             explicitly background. Used instead of AI matting when provided.
         background_image: BGR photo for ``background.mode == "image"``.
+        face_donor: BGR photo whose face replaces one in the image when ``face.enabled``.
         matte: optional 8-bit grayscale subject matte from ``/api/v1/matte`` (255 = subject); skips the model.
 
     Returns:
@@ -79,6 +81,23 @@ def process_pipeline(
         upscaled_out: np.ndarray | None = None
         mask_debug: np.ndarray | None = None
         grain_only: np.ndarray | None = None
+
+        # 1b. Face replacement (before background/grain/filters so those unify the pasted face)
+        if request.face.enabled:
+            if face_donor is None:
+                raise ProcessingError("face replacement needs a donor photo")
+            from app.models.face import get_face_engine
+
+            f = request.face
+            current = get_face_engine().swap(
+                current,
+                face_donor,
+                target_index=f.target,
+                donor_index=f.donor,
+                blend=f.blend,
+                color_match=f.color_match,
+                restore=f.restore,
+            )
 
         # 2. Background
         if request.background.enabled:
@@ -210,7 +229,7 @@ def process_pipeline(
             upscaled=upscaled_out,
             grain_only=grain_only,
         )
-    except ProcessingError:
-        raise
+    except (ProcessingError, ValidationError):
+        raise  # ValidationError keeps its 422 (e.g. no face found in the donor photo)
     except Exception as exc:
         raise ProcessingError(f"pipeline failed: {exc}") from exc

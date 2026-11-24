@@ -33,3 +33,13 @@ Guidance for AI coding agents (and humans) working in this repo.
 - Shaders use `highp` only (iPhone GPUs run `mediump` as 16-bit). Target device is an iPhone 14 Pro (see `ROADMAP.md`).
 - Mobile-first vanilla JS/CSS in `web/`, no build step. Keep tap targets
   ≥ 44px and check layout at phone width.
+
+## Face swap models
+
+- Face swap needs four ONNX files (YuNet, ArcFace, `inswapper_128`, GFPGAN; see `scripts/download_models.py`). The
+  `model-cache` volume hides what the image build downloaded, so on an existing install copy new models into it:
+  `docker cp <file> opencv-image-edit:/home/app/models/`. `GET /api/v1/faces/status` lists what's missing.
+- `app/pipeline/face.py` is pure geometry and is tested without models; `app/models/face.py` is the neural part.
+  Tests stub the engine, so no real faces are committed. Try changes on real photos before shipping (the mask edge once
+  left a visible line at the chin).
+- `inswapper_128` weights are non-commercial research only: keep this a private tool.

@@ -12,7 +12,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="style.css?v=24" />
+  <link rel="stylesheet" href="style.css?v=25" />
 </head>
 <body>
   <main class="app">
@@ -34,6 +34,7 @@
           <canvas id="live-canvas" aria-hidden="true" hidden></canvas>
           <span class="live-badge" aria-hidden="true">Live preview</span>
           <canvas id="mask-canvas" hidden></canvas>
+          <svg id="face-overlay" class="face-overlay" hidden aria-label="Detected faces"></svg>
         </div>
         <div class="transform-bar" role="group" aria-label="Rotate and flip">
           <button class="btn btn-secondary" id="rot-ccw" type="button" aria-label="Rotate left"><span aria-hidden="true">⟲</span><small>Left</small></button>
@@ -78,6 +79,47 @@
     </section>
 
     <section class="controls-section" aria-label="Image processing controls">
+      <details class="control-group" id="face-group">
+        <summary>
+          <span class="control-icon" aria-hidden="true">🙂</span>
+          <span>Face swap</span>
+        </summary>
+        <div class="control-body">
+          <label class="checkbox-row">
+            <input type="checkbox" id="face-enabled" />
+            <span>Replace a face with one from another photo</span>
+          </label>
+          <p class="face-note" id="face-note" hidden></p>
+          <div class="bg-image-row">
+            <button id="face-donor-btn" class="btn btn-secondary" type="button">🙂 Choose photo with the new face</button>
+            <img id="face-donor-thumb" alt="Photo with the new face" hidden />
+            <input id="face-donor-input" type="file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif" hidden />
+          </div>
+          <p class="face-info" id="face-info" aria-live="polite"></p>
+          <div class="face-pick" id="face-target-pick" hidden>
+            <span>Replace which face in your photo?</span>
+            <div class="face-chips" id="face-target-chips" role="group" aria-label="Face to replace"></div>
+          </div>
+          <div class="face-pick" id="face-donor-pick" hidden>
+            <span>Use which face from the new photo?</span>
+            <div class="face-chips" id="face-donor-chips" role="group" aria-label="Face to use"></div>
+          </div>
+          <label class="slider-row">
+            <span>Soften edge <output id="face-blend-value">0.50</output></span>
+            <input type="range" id="face-blend" min="0" max="1" step="0.05" value="0.5" />
+          </label>
+          <label class="slider-row">
+            <span>Match skin tone <output id="face-color-value">0.50</output></span>
+            <input type="range" id="face-color" min="0" max="1" step="0.05" value="0.5" />
+          </label>
+          <label class="slider-row" id="face-restore-row">
+            <span>Sharpen face <output id="face-restore-value">0.80</output></span>
+            <input type="range" id="face-restore" min="0" max="1" step="0.05" value="0.8" />
+          </label>
+          <p class="face-note">Runs on the server when you tap Process (a few seconds). Only use faces of people who are happy for you to.</p>
+        </div>
+      </details>
+
       <details class="control-group" id="bg-group">
         <summary>
           <span class="control-icon" aria-hidden="true">🌫️</span>
@@ -363,6 +405,6 @@
     </button>
   </nav>
 
-  <script type="module" src="app.js?v=36"></script>
+  <script type="module" src="app.js?v=38"></script>
 </body>
 </html>

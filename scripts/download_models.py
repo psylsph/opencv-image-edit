@@ -136,6 +136,30 @@ MODELS: dict[str, dict] = {
         "sha256": "5ee2b8d4d6bc60a777f54e0fe96a1b717360a004b79d56c67390d4a975b14d98",
         "size_mb": 6.7,
     },
+    "face_detection_yunet_2023mar.onnx": {
+        # YuNet face detector (Apache-2.0)
+        "url": "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx",
+        "sha256": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4",
+        "size_mb": 0.2,
+    },
+    "arcface_w600k_r50.onnx": {
+        # ArcFace identity embedder for face swap
+        "url": "https://huggingface.co/facefusion/models-3.0.0/resolve/main/arcface_w600k_r50.onnx",
+        "sha256": "f1f79dc3b0b79a69f94799af1fffebff09fbd78fd96a275fd8f0cbbea23270d1",
+        "size_mb": 166.3,
+    },
+    "inswapper_128.onnx": {
+        # InsightFace inswapper_128 (non-commercial research licence) for face swap
+        "url": "https://huggingface.co/facefusion/models-3.0.0/resolve/main/inswapper_128.onnx",
+        "sha256": "a290273ed497312095dac48cdef20feec9d5208298223dd01288ab202b54bea7",
+        "size_mb": 529.6,
+    },
+    "gfpgan_1.4.onnx": {
+        # GFPGAN 1.4 face restorer (sharpens swapped faces)
+        "url": "https://huggingface.co/facefusion/models-3.0.0/resolve/main/gfpgan_1.4.onnx",
+        "sha256": "accc4757b26bdb89b32b4d3500d4f79c9dff97c1dd7c7104bf9dcb95e3311385",
+        "size_mb": 324.5,
+    },
 }
 
 

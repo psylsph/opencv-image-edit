@@ -61,6 +61,7 @@ def _eviction_loop() -> None:
 def clear_all_model_caches() -> None:
     """Release every cached model session and return free arenas to Linux."""
     from app.models.anime import clear_anime_cache
+    from app.models.face import clear_face_cache
     from app.models.lama import LaMa
     from app.models.matting import clear_matting_cache
     from app.models.painting import clear_paint_cache
@@ -68,6 +69,7 @@ def clear_all_model_caches() -> None:
     from app.pipeline.upscale import Upscaler
 
     clear_matting_cache()
+    clear_face_cache()
     LaMa.clear_cache()
     MobileSAM.clear_cache()
     Upscaler.clear_cache()

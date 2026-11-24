@@ -57,6 +57,7 @@ const DEFAULT_SETTINGS = {
     enabled: false, mode: "blur", blur_strength: 15, model_name: "u2netp",
     color: "#00b140", zoom: 1, offset_x: 0, offset_y: 0, feather: 0, shrink: 0,
   },
+  face: { enabled: false, target: 0, donor: 0, blend: 0.5, color_match: 0.5, restore: 0.8 },
   grain: { enabled: false, intensity: 0.4 },
   upscale: { enabled: false, scale: 2, algorithm: "interp" },
   filters: {
@@ -296,6 +297,8 @@ function bindEvents() {
     });
   });
 
+  initFaceUi();
+
   // Bottom nav: Edit | Process | Result
   $("#nav-edit").addEventListener("click", () => setView("edit"));
   $("#nav-result").addEventListener("click", () => setView("result"));
@@ -375,7 +378,7 @@ function bindEvents() {
 /** Mirror each group's "Enable" checkbox onto the <details> so collapsed groups show "On". */
 function syncGroupBadges() {
   for (const [cb, group] of [
-    ["#bg-enabled", "#bg-group"], ["#blur-enabled", "#blur-group"],
+    ["#bg-enabled", "#bg-group"], ["#blur-enabled", "#blur-group"], ["#face-enabled", "#face-group"],
     ["#inpaint-enabled", "#inpaint-group"], ["#grain-enabled", "#grain-group"],
     ["#upscale-enabled", "#upscale-group"], ["#filters-enabled", "#filters-group"],
   ]) {
@@ -544,6 +547,7 @@ function loadFile(file) {
 
   state.file = file;
   state.previewUrl = URL.createObjectURL(file);
+  onFaceSourceChanged();
 
   // Wire up natural-dimension capture for the mask canvas
   const img = $("#preview");
@@ -613,6 +617,7 @@ async function transformImage(op) {
 function clearFile() {
   stopLivePreview();
   state.file = null;
+  onFaceSourceChanged();
   if (state.previewUrl) {
     URL.revokeObjectURL(state.previewUrl);
     state.previewUrl = null;
@@ -653,6 +658,14 @@ function collectSettings() {
     return el ? el.value : null;
   };
   return {
+    face: {
+      enabled: $("#face-enabled").checked,
+      target: faceUi.target,
+      donor: faceUi.donorIdx,
+      blend: parseFloat($("#face-blend").value),
+      color_match: parseFloat($("#face-color").value),
+      restore: parseFloat($("#face-restore").value),
+    },
     background: {
       enabled: $("#bg-enabled").checked,
       mode: checkedRadio("bg-mode") || "blur",
@@ -710,6 +723,15 @@ function applyPreset(name) {
     desc = "Custom settings";
   }
   $("#preset-description").textContent = desc;
+
+  // Face swap (presets from older servers have no `face` block)
+  const fd = { ...DEFAULT_SETTINGS.face, ...s.face };
+  $("#face-enabled").checked = fd.enabled;
+  for (const [id, key] of [["face-blend", "blend"], ["face-color", "color_match"], ["face-restore", "restore"]]) {
+    setSlider($(`#${id}`), fd[key], $(`#${id}-value`), (v) => parseFloat(v).toFixed(2));
+  }
+  faceUi.target = fd.target; faceUi.donorIdx = fd.donor;
+  renderFaceUi();
 
   // Background
   $("#bg-enabled").checked = s.background.enabled;
@@ -1274,6 +1296,17 @@ async function processImage() {
     formData.append("matte", live.matteBlob, "matte.png");
   }
 
+  if (settings.face.enabled) {
+    if (!faceUi.donorFile) {
+      setStatus("Choose the photo with the new face first (Face swap → Choose photo).", "error");
+      state.processing = false;
+      updateProcessButton();
+      return;
+    }
+    formData.append("face_donor", faceUi.donorFile, faceUi.donorFile.name || "face");
+    setStatus("Swapping the face… this can take 10 s or more.");
+  }
+
   if (isBackgroundPaintActive()) {
     if (!hasPaintMaskContent()) {
       setStatus("Paint at least one background area first, or switch Background source back to Auto.", "error");
@@ -1546,3 +1579,166 @@ function registerServiceWorker() {
 }
 
 init().catch((err) => console.error("Init failed:", err));
+
+
+// --- Face swap ---
+// Detection (POST /api/v1/faces) tells us how many faces each photo has and where, so the user can tap the one to
+// replace. The swap itself is a server step that runs on Process, before background and filters.
+
+const faceUi = {
+  target: 0, donorIdx: 0,          // chosen face indexes (left to right, same order as the server)
+  donorFile: null, donorThumbUrl: null,
+  photo: null,                     // { file, data } detection result for state.file
+  donor: null,                     // { file, data } detection result for the donor photo
+  models: null,                    // /api/v1/faces/status
+  busy: 0,
+};
+
+function initFaceUi() {
+  $("#face-donor-btn").addEventListener("click", () => $("#face-donor-input").click());
+  $("#face-donor-input").addEventListener("change", (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (f) setDonorFile(f);
+  });
+  $("#face-enabled").addEventListener("change", () => { if ($("#face-enabled").checked) detectFaces(); renderFaceUi(); });
+  $("#face-group").addEventListener("toggle", () => { if ($("#face-group").open) detectFaces(); renderFaceUi(); });
+  fetch("/api/v1/faces/status").then((r) => r.json()).then((m) => { faceUi.models = m; renderFaceUi(); }).catch(() => {});
+  renderFaceUi();
+}
+
+/** The edited photo changed (new file, rotate/flip, removed): forget its faces. */
+function onFaceSourceChanged() {
+  faceUi.photo = null;
+  faceUi.target = 0;
+  if (typeof renderFaceUi === "function") {
+    renderFaceUi();
+    if (state.file && ($("#face-enabled")?.checked || $("#face-group")?.open)) detectFaces();
+  }
+}
+
+async function setDonorFile(file) {
+  faceUi.donorFile = file;
+  faceUi.donor = null;
+  faceUi.donorIdx = 0;
+  if (faceUi.donorThumbUrl) URL.revokeObjectURL(faceUi.donorThumbUrl);
+  faceUi.donorThumbUrl = URL.createObjectURL(file);
+  $("#face-donor-thumb").src = faceUi.donorThumbUrl;
+  renderFaceUi();
+  await detectFaces();
+}
+
+async function postFaces(file) {
+  const form = new FormData();
+  form.append("file", file);
+  const resp = await fetch("/api/v1/faces", { method: "POST", body: form });
+  if (!resp.ok) {
+    let msg = `HTTP ${resp.status}`;
+    try { const b = await resp.json(); msg = b.detail || b.message || msg; } catch { /* keep status */ }
+    throw new Error(msg);
+  }
+  return resp.json();
+}
+
+async function detectFaces() {
+  const jobs = [];
+  const photo = state.file, donor = faceUi.donorFile;
+  if (photo && !faceUi.photo) jobs.push(postFaces(photo).then((data) => { if (state.file === photo) faceUi.photo = { file: photo, data }; }));
+  if (donor && !faceUi.donor) jobs.push(postFaces(donor).then((data) => { if (faceUi.donorFile === donor) faceUi.donor = { file: donor, data }; }));
+  if (!jobs.length) return;
+  faceUi.busy++; renderFaceUi();
+  try {
+    await Promise.all(jobs);
+  } catch (err) {
+    console.warn("face detection failed:", err);
+    setFaceNote(`Couldn't look for faces: ${err.message}`, true);
+  } finally {
+    faceUi.busy--;
+    const n = faceUi.photo?.data.faces.length || 0;
+    if (faceUi.target >= n) faceUi.target = 0;
+    const m = faceUi.donor?.data.faces.length || 0;
+    if (faceUi.donorIdx >= m) faceUi.donorIdx = 0;
+    renderFaceUi();
+  }
+}
+
+function setFaceNote(text, isError = false) {
+  const note = $("#face-note");
+  note.textContent = text;
+  note.hidden = !text;
+  note.classList.toggle("is-error", isError);
+}
+
+function faceChips(containerSel, count, selected, onPick) {
+  const box = $(containerSel);
+  box.replaceChildren();
+  for (let i = 0; i < count; i++) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "face-chip"; b.textContent = String(i + 1);
+    b.setAttribute("aria-label", `Face ${i + 1}`);
+    b.setAttribute("aria-pressed", String(i === selected));
+    b.addEventListener("click", () => onPick(i));
+    box.appendChild(b);
+  }
+}
+
+function renderFaceUi() {
+  if (!$("#face-info")) return;
+  const models = faceUi.models;
+  if (models && !models.ready) {
+    setFaceNote("Face swap isn't installed on this server yet (missing models). Run scripts/download_models.py.", true);
+  } else if ($("#face-note").classList.contains("is-error") && models?.ready && !faceUi.busy) {
+    setFaceNote("");
+  }
+  $("#face-restore-row").hidden = !!(models && models.ready && !models.restorer);
+
+  const nPhoto = faceUi.photo?.data.faces.length;
+  const nDonor = faceUi.donor?.data.faces.length;
+  const parts = [];
+  if (faceUi.busy) parts.push("Looking for faces…");
+  else {
+    if (!state.file) parts.push("Load a photo first.");
+    else if (nPhoto === 0) parts.push("No face found in your photo.");
+    else if (nPhoto > 1) parts.push(`${nPhoto} faces in your photo: tap the one to replace.`);
+    else if (nPhoto === 1) parts.push("1 face in your photo.");
+    if (faceUi.donorFile && nDonor === 0) parts.push("No face found in the new-face photo.");
+    else if (nDonor > 1) parts.push(`${nDonor} faces in the new-face photo: pick one.`);
+    if (!faceUi.donorFile) parts.push("Now choose the photo with the new face.");
+  }
+  $("#face-info").textContent = parts.join(" ");
+
+  $("#face-target-pick").hidden = !(nPhoto > 1);
+  $("#face-donor-pick").hidden = !(nDonor > 1);
+  if (nPhoto > 1) faceChips("#face-target-chips", nPhoto, faceUi.target, (i) => { faceUi.target = i; renderFaceUi(); });
+  if (nDonor > 1) faceChips("#face-donor-chips", nDonor, faceUi.donorIdx, (i) => { faceUi.donorIdx = i; renderFaceUi(); });
+  $("#face-donor-thumb").hidden = !faceUi.donorFile;
+  $("#face-donor-btn").textContent = faceUi.donorFile ? "🙂 Change photo with the new face" : "🙂 Choose photo with the new face";
+  drawFaceOverlay();
+}
+
+/** Numbered rings over the photo while the Face swap group is open; tap a ring to choose that face. */
+function drawFaceOverlay() {
+  const svg = $("#face-overlay");
+  const data = faceUi.photo?.data;
+  const show = !!data && data.faces.length > 0 && $("#face-group").open && !!state.file;
+  svg.toggleAttribute("hidden", !show);  // SVG elements have no .hidden property
+  svg.replaceChildren();
+  if (!show) return;
+  svg.setAttribute("viewBox", `0 0 ${data.width} ${data.height}`);  // same letterboxing as the <img> (contain)
+  const ns = "http://www.w3.org/2000/svg";
+  data.faces.forEach((f, i) => {
+    const [x, y, w, h] = f.box;
+    const ring = document.createElementNS(ns, "ellipse");
+    ring.setAttribute("cx", x + w / 2); ring.setAttribute("cy", y + h / 2);
+    ring.setAttribute("rx", w * 0.62); ring.setAttribute("ry", h * 0.72);
+    ring.setAttribute("class", "ring" + (i === faceUi.target ? " on" : ""));
+    ring.addEventListener("click", () => { faceUi.target = i; renderFaceUi(); });
+    svg.appendChild(ring);
+    if (data.faces.length > 1) {
+      const t = document.createElementNS(ns, "text");
+      t.setAttribute("x", x + w / 2); t.setAttribute("y", y - h * 0.1);
+      t.style.fontSize = `${Math.max(data.width, data.height) / 28}px`;
+      t.textContent = String(i + 1);
+      svg.appendChild(t);
+    }
+  });
+}

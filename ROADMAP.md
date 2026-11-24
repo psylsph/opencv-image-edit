@@ -175,81 +175,50 @@ Only worth doing once Phases 1–3 are solid. The point is offline use and zero 
 Risks: iOS Safari memory ceilings kill tabs on big models; WebGPU isn't on every iPhone; WASM is slow on older devices.
 Hence the server fallback is not optional.
 
-## Phase 5: Face replacement (plan)
+## Phase 5: Face replacement
 
-**Meaning (assumed):** take a face from a *donor* photo and put it on a person in the photo being edited ("face swap").
-Everything else in the editor (background, grain, filters) keeps working on the result. If you meant something else
-(cartoon/emoji face, blur/anonymise a face), most of the plumbing below is shared; see the open questions.
+**Done in 1.13.0 (neural engine first, one face):** take a face from a donor photo and put it on one face in the photo
+being edited. Decisions: swap from another photo; go straight to the neural engine; one face at a time.
 
-### How it works
+How it works (server, `app/models/face.py` + `app/pipeline/face.py`):
 
-1. **Detect** faces in both photos: `cv2.FaceDetectorYN` (YuNet). It is already in the OpenCV we ship (5.1, contrib
-   build), the model is ~0.2 MB, Apache-2.0, runs in tens of ms, and returns a box plus 5 landmarks (eyes, nose,
-   mouth corners). No new Python dependency.
-2. **Align** the donor face to the target face with a similarity transform from the 5 landmarks (scale, rotate,
-   translate; no shear, so the donor's face shape is not distorted).
-3. **Swap**, with two engines behind one interface (`app/models/faceswap.py`, same pattern as `matting.py`):
-   - **`classic`** (milestone 1, always available): warp donor face onto target, build a soft face mask (ellipse /
-     hull from the landmarks, eyebrows to chin, excluding hair), match colour in LAB (Reinhard mean/std over the mask),
-     then feathered blend or `cv2.seamlessClone`. Fast (~0.1 s), permissive licences, but it is "a face pasted on":
-     expression and pose of the donor are kept, so it works best when both faces are roughly frontal.
-   - **`neural`** (milestone 2, optional download): ArcFace embedding of the donor + `inswapper_128` generator on the
-     aligned target crop, paste back with the same mask and colour match, then an optional face restorer
-     (GFPGAN/CodeFormer class, ONNX) because the generator works at 128 px. Looks far better; ~1 s per face for the
-     swapper and a few seconds for restoration on this 3-CPU container. Weights total ~0.5–1 GB, so they download on
-     demand into the `model-cache` volume like BiRefNet, and the engine shows "(not downloaded)" until present.
-4. **Composite** into the full-size image (detect on a downscaled copy, warp at full resolution) and carry on with
-   the normal pipeline.
+1. **Detect** with `cv2.FaceDetectorYN` (YuNet, 0.2 MB): box + 5 landmarks; faces are numbered left to right.
+2. **Identity**: ArcFace `w600k_r50` embeds the donor face; the `inswapper_128` embedding map turns it into the latent.
+3. **Swap**: the target face is aligned to the 128 px ArcFace layout, `inswapper_128` renders the donor identity on it,
+   a LAB colour match (Reinhard, inside the face mask) pulls the skin tone toward the photo, then it is pasted back
+   through a soft elliptical mask (only the face's bounding box is warped, so big photos stay cheap).
+4. **Sharpen** (optional): GFPGAN 1.4 re-renders the pasted face on a 512 px FFHQ-aligned crop and is blended back.
+5. Runs **before** background, grain and filters so those unify the result. The cached matte stays valid.
 
-Pipeline position: right after pre-process and **before** background, grain and filters, so grain, vignette and colour
-grading unify the pasted face with the rest of the photo. The cached matte stays valid (the face interior changes,
-the subject outline does not), so face edits do not trigger a new matte.
+API: `POST /api/v1/faces` (boxes + landmarks, same frame as process), `GET /api/v1/faces/status` (models installed?),
+and `face` settings + `face_donor` upload on `POST /api/v1/process` (`enabled`, `target`, `donor`, `blend`,
+`color_match`, `restore`). 422 with a readable message when no face is found in either photo or an index is out of range.
 
-### Server
+UI: **Face swap** group with donor picker, numbered tappable rings on the photo, face chips when there are several faces,
+and sliders for edge softness, skin-tone match and sharpening. Takes about 4 s on this CPU (11 s with everything).
 
-- [ ] `app/models/faceswap.py`: `detect_faces(img)`, `FaceSwapper` protocol with `classic` and `neural`
-      implementations, `get_swapper(name)` caching sessions with the same idle-unload as the other models.
-- [ ] `POST /api/v1/faces`: returns boxes + landmarks + a confidence for each face (target indexes for the UI).
-- [ ] `FaceRequest` in `schemas.py`: `enabled`, `engine` (`classic|neural`), `target` (face index or `all`), `donor`
-      (face index), `blend` 0–1 (feather), `color_match` 0–1, `scale` 0.8–1.2, `restore` bool. All with safe defaults.
-- [ ] `process_pipeline(..., face_donor=None)` and an optional `face_donor` upload on `/api/v1/process`
-      (422 if enabled without one, 400 if undecodable; 422 `no face found in <donor|photo>` is a user-visible message).
-- [ ] Models added to `scripts/download_models.py` with pinned URL + sha256 (verify each licence when pinning; see risks).
-- [ ] Tests (no real faces in the repo): stub the detector with fixed landmarks on synthetic images and check the
-      alignment transform, mask shape/feather, colour transfer (mean/std converge), index selection, error cases, and
-      that the pipeline order holds. One integration test for the real YuNet that is skipped when the model file is
-      absent.
+Models (~1.1 GB, `scripts/download_models.py`): YuNet, ArcFace, `inswapper_128`, GFPGAN 1.4. **They land in the image
+build, but the `model-cache` volume hides them on an existing install**; copy them in with
+`docker cp <file> opencv-image-edit:/home/app/models/` (or run `scripts/download_models.py /home/app/models` inside
+the container). `GET /api/v1/faces/status` tells you what is missing.
 
-### Client
+Next:
 
-- [ ] New **Face** accordion group: *Donor photo* picker (thumbnail like Background → Photo), engine select, sliders for
-      blend / colour match / size.
-- [ ] After a photo (or donor) is chosen, call `/api/v1/faces`; draw numbered rings over the faces on the preview
-      canvas. Tap a ring to choose the target face; same picker for the donor if it has several faces.
-- [ ] Result appears after Process like other server effects. Stretch: the server returns only the swapped face patch +
-      mask + placement and `gl.js` composites it, so blend/colour sliders become live (same trick as the matte).
-- [ ] Clear states: "No face found in the donor photo", "2 faces found, tap the one to replace", progress while the
-      neural engine runs.
-- [ ] Keep donor photo in the browser only; nothing is stored on the server (same rule as the background image).
+- [ ] Live local composite: the server returns just the swapped face patch + mask + placement and `gl.js` composites it,
+      so edge softness / skin-tone sliders become live.
+- [ ] Several faces at once ("swap all", one donor per face).
+- [ ] Drag to nudge the paste; a manual mask brush for hair/glasses/hands over the face.
+- [ ] Faster restorer (the 512 px GFPGAN pass is the slowest step) or a smaller model; fp16 swapper (halves the download).
+- [ ] Phone checks for the ring overlay on a real iPhone 14 Pro (IPHONE-CHECKLIST.md).
 
-### Order of work
+Risks and limits:
 
-1. **1.13.0**: detection endpoint, overlay + face picking, `classic` swap, tests, parity for any shader work.
-2. **1.14.0**: `neural` engine + restorer, model download, quality/speed note in the UI.
-3. **1.15.0**: live local composite of the face patch, multiple faces / swap all, drag to nudge, IPHONE-CHECKLIST items.
-
-### Risks and decisions
-
-- **Licences:** `inswapper_128` weights are published for non-commercial research use. Fine for a private home tool;
-  not fine if this app is ever distributed or sold. The `classic` engine has no such restriction. GFPGAN/CodeFormer
-  licences differ, so check before pinning. Keep the engine boundary clean so the neural part can be swapped out.
-- **Consent and misuse:** this is a personal editor; the UI says to use faces only with the person's permission. The app
-  stores nothing server-side, which also keeps other people's faces off the server.
-- **Quality limits:** profile views, heavy occlusion (hands, hair, sunglasses) and strong lighting differences look
-  wrong in `classic`; say so in the UI rather than failing silently.
-- **Cost:** neural weights make the image/volume bigger and add seconds per face on this CPU; the model idle timeout
-  already frees RAM, and Process time should show in the status bar.
-- **Orientation:** HEIC/EXIF rotation must be applied before detection (the decode path already does this; add a test).
+- **Licences:** `inswapper_128` weights are non-commercial research only. Fine for a private home tool, not if this app is
+  ever distributed or sold. GFPGAN and ArcFace weights have their own terms; check before redistributing anything.
+- **Consent:** the UI says to use faces only with the person's permission. Nothing is stored server-side.
+- **Quality limits:** profile views, heavy occlusion (hands, hair, sunglasses) and strong lighting differences look worse.
+  The swapper works at 128 px, so very large faces rely on the restorer for detail.
+- **Cost:** the models add ~1.1 GB to the image and volume; the 180 s idle timeout frees their RAM.
 
 ## Cross-cutting rules
 
@@ -270,9 +239,7 @@ the subject outline does not), so face edits do not trigger a new matte.
 
 ## Open questions
 
-- Face replacement: is "swap a face from another photo" what you want, or a cartoon/emoji replacement or anonymising blur?
-  Start with `classic` (fast, no big downloads) and add `neural` later, or go straight to the better-looking neural one?
-- Single face per photo at first, or multiple faces from day one?
+
 - Svelte 5 + Vite, or stay vanilla? (recommended: Svelte, see above)
 - Which iOS version is the 14 Pro on? (decides whether WebGPU is even a candidate for Phase 4)
 - Is the replacement background always a photo the user supplies, or do we also ship a few built-in scenes/gradients?

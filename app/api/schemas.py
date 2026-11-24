@@ -21,6 +21,21 @@ class BackgroundRequest(BaseModel):
     shrink: float = Field(default=0.0, ge=-1.0, le=1.0)  # > 0 edge in, < 0 edge out
 
 
+class FaceRequest(BaseModel):
+    """Replace one face in the photo with a face from a donor photo (needs the ``face_donor`` upload)."""
+
+    enabled: bool = False
+    target: int = Field(default=0, ge=0, le=63)  # which face in the photo, counted left to right
+    donor: int = Field(
+        default=0, ge=0, le=63
+    )  # which face in the donor photo, counted left to right
+    blend: float = Field(default=0.5, ge=0, le=1)  # edge softness
+    color_match: float = Field(
+        default=0.5, ge=0, le=1
+    )  # pull the new face's colour toward the photo's
+    restore: float = Field(default=0.8, ge=0, le=1)  # face restorer strength (0 = off)
+
+
 class GrainRequest(BaseModel):
     enabled: bool = False
     intensity: float = Field(default=0.5, ge=0.0, le=1.0)
@@ -50,6 +65,7 @@ class FiltersRequest(BaseModel):
 class ProcessRequest(BaseModel):
     """Top-level request model that bundles all stage sub-requests together."""
 
+    face: FaceRequest = Field(default_factory=FaceRequest)
     background: BackgroundRequest = Field(default_factory=BackgroundRequest)
     grain: GrainRequest = Field(default_factory=GrainRequest)
     upscale: UpscaleRequest = Field(default_factory=UpscaleRequest)

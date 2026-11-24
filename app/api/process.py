@@ -10,7 +10,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.api._common import read_image_bytes
 from app.api.schemas import ProcessRequest
-from app.exceptions import DecodeError, ProcessingError
+from app.exceptions import AppError, DecodeError
 from app.monitoring import (
     image_process_seconds,
     image_process_total,
@@ -37,6 +37,7 @@ async def process(
     background_mask: UploadFile | None = File(default=None),
     background_image: UploadFile | None = File(default=None),
     matte: UploadFile | None = File(default=None),
+    face_donor: UploadFile | None = File(default=None),
 ) -> dict:
     """Process an uploaded image through the pipeline.
 
@@ -44,6 +45,7 @@ async def process(
         file: image file (PNG, JPEG, WebP, HEIC).
         settings: JSON-encoded ProcessRequest.
         matte: subject matte previously returned by ``/api/v1/matte``; avoids running the model again.
+        face_donor: photo whose face replaces one in ``file``, required when ``face.enabled``.
         background_image: replacement background, required when ``background.mode`` is ``image``.
 
     Returns:
@@ -92,17 +94,34 @@ async def process(
             image_process_total.labels(status="decode_error").inc()
             raise HTTPException(status_code=400, detail=f"invalid background image: {exc}") from exc
 
+    donor_img = None
+    if req.face.enabled:
+        if face_donor is None:
+            raise HTTPException(status_code=422, detail="face replacement needs a face_donor file")
+        try:
+            donor_img = decode_to_bgr(await read_image_bytes(face_donor))
+        except DecodeError as exc:
+            image_process_total.labels(status="decode_error").inc()
+            raise HTTPException(status_code=400, detail=f"invalid donor photo: {exc}") from exc
+        if donor_img.ndim == 3 and donor_img.shape[2] == 4:
+            donor_img = donor_img[:, :, :3]
+
     started = time.perf_counter()
     status = "ok"
     try:
         result: ProcessResult = process_pipeline(
-            img_bgr, req, background_mask=bg_mask_img, background_image=bg_image, matte=matte_img
+            img_bgr,
+            req,
+            background_mask=bg_mask_img,
+            background_image=bg_image,
+            matte=matte_img,
+            face_donor=donor_img,
         )
-    except ProcessingError as exc:
+    except AppError as exc:
         status = "processing_error"
         image_process_total.labels(status=status).inc()
         image_process_seconds.labels(status=status).observe(time.perf_counter() - started)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     elapsed = time.perf_counter() - started
     image_process_seconds.labels(status=status).observe(elapsed)
     image_process_total.labels(status=status).inc()

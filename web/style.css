@@ -780,3 +780,24 @@ body[data-view="edit"] .output-section { display: none; }
 .transform-bar small { font-size: 11px; font-weight: 600; color: var(--fg-dim); }
 .btn-danger { color: var(--error); }
 .btn-danger:hover:not(:disabled) { border-color: var(--error); }
+
+/* Face swap */
+.face-note, .face-info { margin: 0; font-size: 13px; color: var(--muted, #9aa3b2); line-height: 1.4; }
+.face-info { min-height: 1.4em; }
+.face-note.is-error { color: #ff8a8a; }
+.face-pick { display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
+.face-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.face-chip {
+  min-width: 44px; height: 44px; padding: 0 14px; border-radius: 22px; cursor: pointer;
+  border: 2px solid var(--border); background: var(--surface-2); color: inherit; font: inherit;
+}
+.face-chip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: #fff; }
+#face-donor-thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); }
+.face-overlay {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none;          /* only the rings take touches */
+}
+.face-overlay[hidden] { display: none; }
+.face-overlay .ring { fill: rgba(255, 255, 255, 0.04); stroke: #fff; stroke-width: 3; vector-effect: non-scaling-stroke; pointer-events: all; cursor: pointer; }
+.face-overlay .ring.on { stroke: var(--accent); stroke-width: 5; fill: rgba(110, 140, 255, 0.18); }
+.face-overlay text { fill: #fff; font: 700 16px system-ui, sans-serif; paint-order: stroke; stroke: rgba(0, 0, 0, 0.6); stroke-width: 3px; pointer-events: none; text-anchor: middle; }
