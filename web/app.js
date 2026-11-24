@@ -246,12 +246,12 @@ function bindEvents() {
 
   // Inpaint (object removal) and Blur Area share one selection canvas + toolbar
   // (also used by Background "Paint BG"); only one of the two groups owns it.
-  for (const owner of ["inpaint", "blur"]) {
-    const other = owner === "inpaint" ? "blur" : "inpaint";
+  const OWNERS = ["inpaint", "blur", "tattoo"];
+  for (const owner of OWNERS) {
     $(`#${owner}-enabled`).addEventListener("change", (e) => {
       const group = $(`#${owner}-group`);
       if (e.target.checked) {
-        $(`#${other}-enabled`).checked = false;
+        for (const other of OWNERS) if (other !== owner) $(`#${other}-enabled`).checked = false;
         clearClickSelection();
         state.mask.owner = owner;
         state.mask.enabled = true;
@@ -271,6 +271,9 @@ function bindEvents() {
   $("#blur-area-strength").addEventListener("input", (e) => {
     $("#blur-area-value").textContent = e.target.value;
   });
+  for (const [slider, out] of [["#tattoo-strength", "#tattoo-strength-value"], ["#tattoo-grow", "#tattoo-grow-value"]]) {
+    $(slider).addEventListener("input", (e) => { $(out).textContent = parseFloat(e.target.value).toFixed(2); });
+  }
   // Shared selection toolbar
   $$("input[name='sel-mode']").forEach((r) => {
     r.addEventListener("change", (e) => {
@@ -379,7 +382,7 @@ function bindEvents() {
 /** Mirror each group's "Enable" checkbox onto the <details> so collapsed groups show "On". */
 function syncGroupBadges() {
   for (const [cb, group] of [
-    ["#bg-enabled", "#bg-group"], ["#blur-enabled", "#blur-group"], ["#face-enabled", "#face-group"],
+    ["#bg-enabled", "#bg-group"], ["#blur-enabled", "#blur-group"], ["#face-enabled", "#face-group"], ["#tattoo-enabled", "#tattoo-group"],
     ["#inpaint-enabled", "#inpaint-group"], ["#grain-enabled", "#grain-group"],
     ["#upscale-enabled", "#upscale-group"], ["#filters-enabled", "#filters-group"],
   ]) {
@@ -492,6 +495,7 @@ function activeTool() {
 
 const TOOL_LABELS = {
   inpaint: { title: "✂️ Remove object", verb: "remove" },
+  tattoo: { title: "🩹 Remove tattoo", verb: "remove the tattoo from" },
   blur: { title: "💧 Blur area", verb: "blur" },
   bg: { title: "🌫️ Paint the background", verb: "treat as background" },
 };
@@ -649,7 +653,7 @@ function updateProcessButton() {
     btn.textContent = "⏳ Processing…";
   } else {
     const tool = activeTool();
-    btn.textContent = tool === "blur" ? "💧 Apply blur" : tool === "inpaint" ? "✂️ Remove object" : "🚀 Process";
+    btn.textContent = tool === "blur" ? "💧 Apply blur" : tool === "inpaint" ? "✂️ Remove object" : tool === "tattoo" ? "🩹 Remove tattoo" : "🚀 Process";
   }
 }
 
@@ -1217,7 +1221,7 @@ async function runSegmentation(clientX, clientY) {
     drawDetectedMaskOnCanvas(data.mask);
     const areaPct = (data.mask_area_pct * 100).toFixed(1);
     const borderText = data.selection_border_px ? `, +${data.selection_border_px}px edge margin` : "";
-    const nextStep = state.mask.owner === "blur" ? "Apply blur" : "Remove object";
+    const nextStep = { blur: "Apply blur", tattoo: "Remove tattoo" }[state.mask.owner] || "Remove object";
     statusEl.textContent =
       `Selected ${areaPct}% of the image${borderText}. Press “${nextStep}”, or tap elsewhere to re-select.`;
   } catch (err) {
@@ -1270,11 +1274,13 @@ async function processImage() {
   // Branch: if Remove Object is on AND the user has painted a mask, hit
   // the dedicated /api/v1/inpaint endpoint (it accepts a separate mask file).
   if (state.mask.enabled && hasMaskContent()) {
-    await (state.mask.owner === "blur" ? processBlurArea() : processInpaint());
+    await ({ blur: processBlurArea, tattoo: processTattoo }[state.mask.owner] || processInpaint)();
     return;
   }
-  if (state.mask.enabled && state.mask.owner === "blur") {
-    setStatus("Select an area to blur first: tap an object or paint it.", "error");
+  if (state.mask.enabled && (state.mask.owner === "blur" || state.mask.owner === "tattoo")) {
+    setStatus(state.mask.owner === "tattoo"
+      ? "Select the tattoo first: tap it or paint over it."
+      : "Select an area to blur first: tap an object or paint it.", "error");
     state.processing = false;
     updateProcessButton();
     return;
@@ -1451,6 +1457,57 @@ async function processInpaint() {
   const sizeStr = (w && h) ? ` · ${w}×${h}` : "";
   const secs = (data.elapsed_seconds ?? 0).toFixed(2);
   setStatus(`Inpainted (${algorithm}, r=${radius}) in ${secs}s${sizeStr}`, "success");
+  state.processing = false;
+  updateProcessButton();
+}
+
+async function processTattoo() {
+  const strength = parseFloat($("#tattoo-strength").value);
+  const grow = parseFloat($("#tattoo-grow").value);
+  const fail = (msg) => {
+    setStatus(msg, "error");
+    state.processing = false;
+    updateProcessButton();
+  };
+  let maskBlob;
+  try {
+    maskBlob = await getMaskPngBlob();
+  } catch (err) {
+    return fail(`Error preparing mask: ${err.message}`);
+  }
+  if (!maskBlob) return fail("Error: could not serialize mask");
+
+  const formData = new FormData();
+  formData.append("file", state.file);
+  formData.append("mask", maskBlob, "mask.png");
+  formData.append("strength", String(strength));
+  formData.append("grow", String(grow));
+  setStatus("Removing the tattoo… this can take 10 s or more.");
+
+  let resp;
+  try {
+    resp = await fetch("/api/v1/tattoo", { method: "POST", body: formData });
+  } catch (networkErr) {
+    return fail(`Network error: ${networkErr.message}`);
+  }
+  if (!resp.ok) {
+    let errMsg = `HTTP ${resp.status}`;
+    try {
+      const errBody = await resp.json();
+      errMsg = errBody.detail || errBody.message || errMsg;
+    } catch { /* keep the status */ }
+    return fail(`Error: ${errMsg}`);
+  }
+  let data;
+  try {
+    data = await resp.json();
+  } catch {
+    return fail("Error: invalid JSON response");
+  }
+  state.lastResult = data;
+  renderOutputs(data);
+  const secs = (data.elapsed_seconds ?? 0).toFixed(1);
+  setStatus(`Tattoo removed in ${secs}s`, "success");
   state.processing = false;
   updateProcessButton();
 }

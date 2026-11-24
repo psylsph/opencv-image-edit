@@ -239,9 +239,12 @@ Risks and limits:
 
 ## Backlog (not scheduled)
 
-- [ ] **Tattoo removal**: paint or tap over a tattoo and replace it with clean skin. Likely the existing LaMa inpainting
-      (Remove Object) with a skin-aware prompt/mask: tap-select with SAM, grow the mask a few px, inpaint, then match
-      skin tone and texture/grain at the seam. Needs real-photo testing on curved limbs and over hair.
+- [x] **Tattoo removal** (1.16.0): *Remove Tattoo* group; tap/paint selection (shared tools) -> `POST /api/v1/tattoo`:
+      skin colour sampled from a ring well outside the selection, nearby pixels that look like skin mixed with the
+      tattoo's ink are added to the mask ("catch faint ink"), LaMa fill, skin grain re-added at the level measured on the
+      surrounding skin, soft edge, "amount removed" slider to fade instead of erase. Limits: tattoos running into hair
+      or clothing smear (the fill rebuilds hair badly); a global tone-matching step was tried and removed because it
+      pulled in colours from hair. To improve: hair-aware masks, curved-limb shading.
 
 ## Cross-cutting rules
 
