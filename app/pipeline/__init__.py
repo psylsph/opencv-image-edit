@@ -54,6 +54,7 @@ def process_pipeline(
     request: ProcessRequest,
     background_mask: Optional[np.ndarray] = None,
     background_image: Optional[np.ndarray] = None,
+    matte: Optional[np.ndarray] = None,
 ) -> ProcessResult:
     """Run the full processing pipeline.
 
@@ -63,6 +64,7 @@ def process_pipeline(
         background_mask: optional user-painted mask where non-zero pixels are
             explicitly background. Used instead of AI matting when provided.
         background_image: BGR photo for ``background.mode == "image"``.
+        matte: optional 8-bit grayscale subject matte from ``/api/v1/matte`` (255 = subject); skips the model.
 
     Returns:
         ProcessResult with the final image plus debug visualizations.
@@ -82,6 +84,13 @@ def process_pipeline(
         if request.background.enabled:
             if background_mask is not None:
                 mask = background_paint_mask_to_foreground_alpha(background_mask, current.shape)
+            elif matte is not None:
+                m = matte[:, :, 0] if matte.ndim == 3 else matte
+                if m.shape != current.shape[:2]:
+                    m = cv2.resize(
+                        m, (current.shape[1], current.shape[0]), interpolation=cv2.INTER_LINEAR
+                    )
+                mask = m.astype(np.float32) / 255.0
             else:
                 matting = get_matting_model(request.background.model_name)
                 mask = matting.predict(current)

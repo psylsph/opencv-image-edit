@@ -835,10 +835,13 @@ function drawLive() {
 const wantsMatte = () =>
   $("#bg-enabled").checked && (document.querySelector("input[name='bg-source']:checked")?.value || "auto") === "auto";
 
+const matteKeyNow = () =>
+  `${state.file.name}|${state.file.size}|${state.file.lastModified}|${$("#bg-model")?.value || "u2netp"}`;
+
 async function syncMatte() {
   const live = state.live;
   if (!live.renderer || !state.file || !live.image) return;
-  const key = `${state.file.name}|${state.file.size}|${state.file.lastModified}|${$("#bg-model")?.value || "u2netp"}`;
+  const key = matteKeyNow();
   if (live.matteKey === key || live.matteBusy === key || live.matteFailed === key) return;
   live.matteBusy = key;
   const token = live.token;
@@ -848,10 +851,12 @@ async function syncMatte() {
     form.append("model_name", $("#bg-model")?.value || "u2netp");
     const resp = await fetch("/api/v1/matte", { method: "POST", body: form });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const bmp = await createImageBitmap(await resp.blob());
+    const matteBlob = await resp.blob();
+    const bmp = await createImageBitmap(matteBlob);
     if (token !== live.token || live.matteBusy !== key) { bmp.close?.(); return; }  // photo or model changed meanwhile
     live.renderer.setMask(bmp);
     live.matteKey = key;
+    live.matteBlob = matteBlob;  // Process sends it back so the server doesn't run the model a second time
   } catch (err) {
     console.warn("matte unavailable, background applies on Process:", err);
     if (token === live.token) live.matteFailed = key;
@@ -1258,6 +1263,11 @@ async function processImage() {
       return;
     }
     formData.append("background_image", state.bgFile, state.bgFile.name || "background");
+  }
+
+  const live = state.live;
+  if (settings.background.enabled && wantsMatte() && live?.matteBlob && live.matteKey === matteKeyNow()) {
+    formData.append("matte", live.matteBlob, "matte.png");
   }
 
   if (isBackgroundPaintActive()) {

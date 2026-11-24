@@ -36,12 +36,14 @@ async def process(
     settings: str = Form(...),
     background_mask: UploadFile | None = File(default=None),
     background_image: UploadFile | None = File(default=None),
+    matte: UploadFile | None = File(default=None),
 ) -> dict:
     """Process an uploaded image through the pipeline.
 
     Args:
         file: image file (PNG, JPEG, WebP, HEIC).
         settings: JSON-encoded ProcessRequest.
+        matte: subject matte previously returned by ``/api/v1/matte``; avoids running the model again.
         background_image: replacement background, required when ``background.mode`` is ``image``.
 
     Returns:
@@ -69,6 +71,15 @@ async def process(
             image_process_total.labels(status="decode_error").inc()
             raise HTTPException(status_code=400, detail=f"invalid background mask: {exc}") from exc
 
+    matte_img = None
+    if matte is not None:
+        try:
+            matte_img = decode_to_bgr(await read_image_bytes(matte))
+            matte_img = matte_img[:, :, 0] if matte_img.ndim == 3 else matte_img
+        except DecodeError as exc:
+            image_process_total.labels(status="decode_error").inc()
+            raise HTTPException(status_code=400, detail=f"invalid matte: {exc}") from exc
+
     bg_image = None
     if req.background.enabled and req.background.mode == "image":
         if background_image is None:
@@ -85,7 +96,7 @@ async def process(
     status = "ok"
     try:
         result: ProcessResult = process_pipeline(
-            img_bgr, req, background_mask=bg_mask_img, background_image=bg_image
+            img_bgr, req, background_mask=bg_mask_img, background_image=bg_image, matte=matte_img
         )
     except ProcessingError as exc:
         status = "processing_error"

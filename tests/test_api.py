@@ -613,6 +613,30 @@ class TestReplaceBackgroundEndpoint:
         raw = base64.b64decode(resp.json()["final"].split(",", 1)[1])
         return cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
 
+    def test_uploaded_matte_replaces_the_model(self, test_client: TestClient):
+        # The stub says the left half is the subject; the uploaded matte says the right half is.
+        matte = np.zeros((40, 60), np.uint8)
+        matte[:, 30:] = 255
+        r = self._post(
+            test_client,
+            {"mode": "color", "color": "#0000ff"},
+            {"matte": ("m.png", self._png(matte), "image/png")},
+        )
+        assert r.status_code == 200
+        out = self._final(r)
+        assert tuple(out[20, 55]) == (10, 20, 30) and tuple(out[20, 5]) == (255, 0, 0)
+
+    def test_matte_of_other_size_is_resized(self, test_client: TestClient):
+        matte = np.zeros((20, 30), np.uint8)
+        matte[:, 15:] = 255
+        r = self._post(
+            test_client,
+            {"mode": "color", "color": "#0000ff"},
+            {"matte": ("m.png", self._png(matte), "image/png")},
+        )
+        assert r.status_code == 200
+        assert tuple(self._final(r)[20, 55]) == (10, 20, 30)
+
     def test_colour_background(self, test_client: TestClient):
         r = self._post(test_client, {"mode": "color", "color": "#0000ff"})
         assert r.status_code == 200
