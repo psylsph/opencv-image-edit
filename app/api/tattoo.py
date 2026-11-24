@@ -70,6 +70,7 @@ async def tattoo(
         "final": f"data:image/png;base64,{base64.b64encode(png).decode('ascii')}",
         "mode": info["mode"],
         "ink_pct": info["ink_pct"],
+        "passes": info.get("passes", 1),
         "elapsed_seconds": elapsed,
         "output_size": {"width": result.shape[1], "height": result.shape[0]},
     }

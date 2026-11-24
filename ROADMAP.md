@@ -255,6 +255,11 @@ Risks and limits:
       removes ~80% of the ink and changes nothing else; a loose selection that also covers long hair or a skin-coloured
       wall can repaint some of that (the skin test cannot tell hair from ink by colour alone). Ideas: a tattoo-aware
       model, per-component confirmation (show the detected ink and let the user veto), hair-aware masks.
+      1.18.3: "Catch faint ink" now tightens every test together (skin threshold, darker/vivid margin, directions with
+      skin), widens the edge, and at high values re-checks the cleaned result up to 3 times (slower, ~25 s); the skin
+      model spreads in short steps so sunlit highlights count as skin; big tattoos get their solid interior removed by
+      spreading through connected pixels of the ink's own colour. On the test photo, a tight selection catches 96.5% at
+      maximum, a solid patch 100%.
       Tried and dropped: filling from the ring around the selection (bled background in), a global tone-matching step
       (pulled in hair colours), 'holes fully enclosed by skin' (too strict on JPEG noise).
 

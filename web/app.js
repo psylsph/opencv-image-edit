@@ -1487,7 +1487,7 @@ async function processTattoo() {
   formData.append("mask", maskBlob, "mask.png");
   formData.append("strength", String(strength));
   formData.append("grow", String(grow));
-  setStatus("Removing the tattoo… this can take 10 s or more.");
+  setStatus(grow >= 0.85 ? "Removing the tattoo (high sensitivity looks three times)… this can take 20–30 s." : "Removing the tattoo… this can take 10 s or more.");
 
   let resp;
   try {
