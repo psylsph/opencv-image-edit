@@ -209,7 +209,7 @@ Next:
 - [ ] Several faces at once ("swap all", one donor per face).
 - [ ] Drag to nudge the paste; a manual mask brush for hair/glasses/hands over the face.
 - [ ] Faster restorer (the 512 px GFPGAN pass is the slowest step) or a smaller model; fp16 swapper (halves the download).
-- [ ] Phone checks for the ring overlay on a real iPhone 14 Pro (IPHONE-CHECKLIST.md).
+- [ ] Run IPHONE-CHECKLIST.md on the iPhone 14 Pro (rings, tapping, HEIC donor).
 
 Risks and limits:
 
