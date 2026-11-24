@@ -221,6 +221,12 @@ Risks and limits:
   The swapper works at 128 px, so very large faces rely on the restorer for detail.
 - **Cost:** the models add ~1.1 GB to the image and volume; the 180 s idle timeout frees their RAM.
 
+## Backlog (not scheduled)
+
+- [ ] **Tattoo removal**: paint or tap over a tattoo and replace it with clean skin. Likely the existing LaMa inpainting
+      (Remove Object) with a skin-aware prompt/mask: tap-select with SAM, grow the mask a few px, inpaint, then match
+      skin tone and texture/grain at the seam. Needs real-photo testing on curved limbs and over hair.
+
 ## Cross-cutting rules
 
 - Server stays the **reference implementation**; every client-side step has a server equivalent and a parity test.
