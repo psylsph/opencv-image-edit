@@ -57,7 +57,7 @@ const DEFAULT_SETTINGS = {
     enabled: false, mode: "blur", blur_strength: 15, model_name: "u2netp",
     color: "#00b140", zoom: 1, offset_x: 0, offset_y: 0, feather: 0, shrink: 0, defringe: 0,
   },
-  face: { enabled: false, target: 0, donor: 0, blend: 0.5, color_match: 0.3, restore: 0.3, hair: false },
+  face: { enabled: false, target: 0, donor: 0, blend: 0.5, color_match: 0.3, restore: 0.3, hair: false, shape: 0.8 },
   grain: { enabled: false, intensity: 0.4 },
   upscale: { enabled: false, scale: 2, algorithm: "interp" },
   filters: {
@@ -671,6 +671,7 @@ function collectSettings() {
       color_match: parseFloat($("#face-color").value),
       restore: parseFloat($("#face-restore").value),
       hair: $("#face-hair").checked,
+      shape: parseFloat($("#face-shape").value),
     },
     background: {
       enabled: $("#bg-enabled").checked,
@@ -735,7 +736,7 @@ function applyPreset(name) {
   const fd = { ...DEFAULT_SETTINGS.face, ...s.face };
   $("#face-enabled").checked = fd.enabled;
   $("#face-hair").checked = !!fd.hair;
-  for (const [id, key] of [["face-blend", "blend"], ["face-color", "color_match"], ["face-restore", "restore"]]) {
+  for (const [id, key] of [["face-blend", "blend"], ["face-color", "color_match"], ["face-restore", "restore"], ["face-shape", "shape"]]) {
     setSlider($(`#${id}`), fd[key], $(`#${id}-value`), (v) => parseFloat(v).toFixed(2));
   }
   faceUi.target = fd.target; faceUi.donorIdx = fd.donor;

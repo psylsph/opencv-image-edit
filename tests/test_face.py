@@ -151,6 +151,37 @@ class TestSwapGeometry:
         assert out[140, 150] == 1.0 and out[0, 0] == 0.0
 
 
+class TestFaceShape:
+    def test_donor_face_mask_without_labels_is_inside_the_swap_ellipse(self):
+        m = geo.donor_face_mask(256, 0.6)
+        assert (
+            m[128, 128] > 0.95
+            and m[0].max() < 0.01
+            and m[:, 0].max() < 0.01
+            and m[:, -1].max() < 0.01
+        )
+
+    def test_donor_face_mask_uses_only_face_parts_when_parsed(self):
+        labels = np.zeros((512, 512), np.uint8)
+        labels[150:400, 150:350] = 1  # skin
+        labels[100:150, 150:350] = 17  # hair above the face
+        m = geo.donor_face_mask(256, 0.0, labels)
+        assert m[128, 128] > 0.95  # skin
+        assert m[60, 128] < 0.05  # the hair rows are left out (they would paste stray strands)
+
+    def test_prepaste_mixes_by_shape(self):
+        crop = np.full((64, 64, 3), 100, np.uint8)
+        donor = np.full((64, 64, 3), 200, np.uint8)
+        mask = np.ones((64, 64), np.float32)
+        assert np.array_equal(geo.prepaste(crop, donor, mask, 0.0), crop)
+        assert np.array_equal(geo.prepaste(crop, donor, mask, 1.0), donor)
+        assert 140 <= geo.prepaste(crop, donor, mask, 0.5)[0, 0, 0] <= 160
+        zero = np.zeros((64, 64), np.float32)
+        assert np.array_equal(
+            geo.prepaste(crop, donor, zero, 1.0), crop
+        )  # outside the mask: unchanged
+
+
 class TestColourMatch:
     def _pair(self):
         rng = np.random.default_rng(1)
@@ -390,6 +421,7 @@ class TestApi:
                 "color_match": 0.1,
                 "restore": 0.4,
                 "hair": False,
+                "shape": 0.8,
             }
         ]
 

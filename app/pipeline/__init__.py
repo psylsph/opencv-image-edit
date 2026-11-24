@@ -98,6 +98,7 @@ def process_pipeline(
                 color_match=f.color_match,
                 restore=f.restore,
                 hair=f.hair,
+                shape=f.shape,
             )
 
         # 2. Background

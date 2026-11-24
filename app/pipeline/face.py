@@ -174,6 +174,38 @@ FACE_LABELS = (
 )  # skin, brows, eyes, glasses, ears, nose, mouth, lips
 
 
+def donor_face_mask(
+    size: int, feather: float = 0.6, labels: np.ndarray | None = None
+) -> np.ndarray:
+    """Where the donor's own face pixels are pre-pasted into the target crop (before the generator cleans it up).
+
+    With face-parsing ``labels`` of the donor crop: skin, brows, eyes, nose, mouth, lips (no hair, hat, ears or
+    background, which left stray strands and scars). Without: a plain ellipse. Always kept inside the swap ellipse.
+    """
+    ell = _ellipse_mask(size, (0.5 * size, 0.495 * size), (0.36 * size, 0.42 * size), 0.0)
+    if labels is None:
+        base = ell
+    else:
+        lab = cv2.resize(labels, (size, size), interpolation=cv2.INTER_NEAREST)
+        parts = np.isin(lab, (1, 2, 3, 4, 5, 6, 10, 11, 12, 13)).astype(np.uint8)
+        parts = cv2.morphologyEx(parts, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+        base = parts.astype(np.float32) * ell
+    sigma = float(np.clip(feather, 0.0, 1.0)) * 0.03 * size
+    if sigma >= 0.5:
+        base = cv2.GaussianBlur(base, (0, 0), sigma)
+    return np.clip(base, 0.0, 1.0)
+
+
+def prepaste(
+    crop: np.ndarray, donor_crop: np.ndarray, mask: np.ndarray, shape: float
+) -> np.ndarray:
+    """Mix the donor's (colour-matched) face into the target crop by ``shape`` 0..1 inside ``mask``."""
+    a = (mask * float(np.clip(shape, 0.0, 1.0)))[:, :, None]
+    return np.clip(
+        crop.astype(np.float32) * (1.0 - a) + donor_crop.astype(np.float32) * a + 0.5, 0, 255
+    ).astype(np.uint8)
+
+
 def label_mask(labels: np.ndarray, which) -> np.ndarray:
     return np.isin(labels, which).astype(np.uint8)
 

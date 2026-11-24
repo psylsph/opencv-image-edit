@@ -285,8 +285,16 @@ class FaceEngine:
         color_match: float = 0.3,
         restore: float = 0.3,
         hair: bool = False,
+        shape: float = 0.8,
     ) -> np.ndarray:
-        """Put the donor's face (and with ``hair`` their hair) on one face of ``target_bgr``; same size back."""
+        """Put the donor's face (and with ``hair`` their hair) on one face of ``target_bgr``; same size back.
+
+        ``shape`` 0..1: how much of the donor's own face shape (jaw, cheeks, expression) to take. The generator alone
+        keeps the target's outline and only repaints the inner features, so at 0 the result looks like the target
+        wearing the donor's features. Above 0 the donor's face (aligned, colour-matched to the target's skin) is
+        pasted into the target crop *before* the generator runs; the generator then harmonises it with one
+        identity, lighting and skin. At 1 the face shape and expression are the donor's.
+        """
         target_faces = self.detect(target_bgr)
         if not target_faces:
             raise ValidationError("no face found in the photo")
@@ -310,7 +318,16 @@ class FaceEngine:
 
         size = 256 if self._swapper_kind == "hyperswap" else 128
         crop, m = geo.align_crop(target_bgr, target.kps, geo.swap_template(size), size)
-        patch, model_mask = self._render(crop, emb)
+        src = crop
+        if shape > 0:
+            dcrop, _ = geo.align_crop(donor_bgr, donor.kps, geo.swap_template(size), size)
+            labels = None
+            if (self.model_dir / FACE_MODELS["parser"].filename).exists():
+                labels = self.parse(cv2.resize(dcrop, (512, 512), interpolation=cv2.INTER_CUBIC))
+            dmask = geo.donor_face_mask(size, 0.6, labels)
+            dcrop = geo.match_color(dcrop, crop, (dmask > 0.5).astype(np.float32), 1.0)
+            src = geo.prepaste(crop, dcrop, dmask, shape)
+        patch, model_mask = self._render(src, emb)
         mask = geo.swap_mask(size, blend, model_mask)
         patch = geo.match_color(patch, crop, (mask > 0.5).astype(np.float32), color_match)
         result = geo.paste_back(target_bgr, patch, m, mask)

@@ -109,6 +109,10 @@
             <span>Also take their hair (best with a plain background and no hat)</span>
           </label>
           <label class="slider-row">
+            <span>Face shape: theirs → new face <output id="face-shape-value">0.80</output></span>
+            <input type="range" id="face-shape" min="0" max="1" step="0.05" value="0.8" />
+          </label>
+          <label class="slider-row">
             <span>Soften edge <output id="face-blend-value">0.50</output></span>
             <input type="range" id="face-blend" min="0" max="1" step="0.05" value="0.5" />
           </label>
@@ -435,6 +439,6 @@
     </button>
   </nav>
 
-  <script type="module" src="app.js?v=42"></script>
+  <script type="module" src="app.js?v=43"></script>
 </body>
 </html>

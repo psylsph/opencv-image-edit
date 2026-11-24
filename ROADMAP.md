@@ -190,6 +190,12 @@ How it works (server, `app/models/face.py` + `app/pipeline/face.py`):
    ArcFace's own 112 layout), the generator renders the donor identity, a LAB colour match pulls skin tone toward the
    photo, and it is pasted back through the generator's own face mask times a soft ellipse (never touching the crop
    border, which used to leave a line across the forehead).
+3b. **Face shape** (1.17.0, default 0.8): the generator alone keeps the *target's* outline, jaw and expression and only
+   repaints the inner features. So before it runs, the donor's own face (aligned in the same layout, masked to skin and
+   features with BiSeNet so no hair strands come along, colour-matched to the target's skin) is mixed into the target
+   crop by the slider; the generator then harmonises it. 0 = the old behaviour, 1 = the donor's face shape and
+   expression. Measured donor similarity 0.756 (0) -> 0.809 (0.8). Tried and dropped: cross-fading raw donor pixels
+   after the swap (ghosting), pushing the identity vector away from the target (lower match), extra passes (tiny gain).
 4. **Sharpen** (optional, default 0.3): GFPGAN 1.4 on a 512 px FFHQ-aligned crop, blended back.
 5. **Hair** (optional): BiSeNet face parsing finds hair on both people in a wide head crop. The target's hair is erased
    by LaMa inpainting (not the face), the donor's hair is pasted over, scaled/rotated to the target's head by the same
