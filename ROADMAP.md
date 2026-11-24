@@ -84,8 +84,8 @@ moves a blur slider or swaps a background. So:
 no request in flight, and the downloaded PNG matches the server render within tolerance.
 
 **Known gaps after 1.11.0:** painted-background selections (Paint BG) still wait for Process; the first matte with
-BiRefNet Tiny takes seconds on this CPU (U2NetP is ~0.7 s), so the badge shows "Finding subject…" meanwhile; Process
-still recomputes the matte on the server (next: send the cached matte back so Process reuses it).
+BiRefNet Tiny takes seconds on this CPU (U2NetP is ~0.7 s), so the badge shows "Finding subject…" meanwhile.
+Process now reuses the matte the preview already fetched (1.12.1), so the model runs once per photo.
 
 ## Phase 2: Replace the background with another image
 
