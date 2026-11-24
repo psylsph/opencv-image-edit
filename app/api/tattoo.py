@@ -10,7 +10,7 @@ import numpy as np
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.api._common import read_image_bytes
-from app.exceptions import DecodeError, ModelNotFoundError, ValidationError
+from app.exceptions import DecodeError, ValidationError
 from app.monitoring import image_process_seconds, image_process_total
 from app.pipeline.io import decode_to_bgr, encode_png
 from app.pipeline.tattoo import remove_tattoo
@@ -26,10 +26,10 @@ async def tattoo(
     grow: float = Form(default=0.3),
     algorithm: str = Form(default="lama"),
 ) -> dict:
-    """Remove the tattoo under ``mask`` (white = tattoo).
+    """Remove the tattoo inside ``mask`` (white = search here; it may overshoot onto the background).
 
-    ``strength`` 0..1 (1 = gone, less = faded), ``grow`` 0..1 (how eagerly faint ink and outlines next to the
-    selection are added to it), ``algorithm`` ``lama`` | ``telea`` | ``ns``.
+    Only tattoo-coloured pixels that are surrounded by skin are replaced, with the colour of the skin around them.
+    ``strength`` 0..1 (1 = gone, less = faded), ``grow`` 0..1 (higher catches fainter ink and outlines).
     """
     try:
         img = decode_to_bgr(await read_image_bytes(file))
@@ -54,9 +54,6 @@ async def tattoo(
     started = time.perf_counter()
     try:
         result = remove_tattoo(img, mask_img, strength=strength, grow=grow, algorithm=algorithm)
-    except ModelNotFoundError as exc:
-        image_process_total.labels(status="model_missing").inc()
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.message) from exc
     except Exception as exc:

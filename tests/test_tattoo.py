@@ -1,6 +1,8 @@
-"""Tattoo removal: skin sampling, catching faint ink, texture, blending, and the endpoint (TELEA fill, no models)."""
+"""Tattoo removal: the selection is only the search area; ink on skin is replaced with surrounding skin."""
 
 from __future__ import annotations
+
+import base64
 
 import cv2
 import numpy as np
@@ -11,29 +13,31 @@ from app.exceptions import ValidationError
 from app.pipeline import tattoo as T
 
 SKIN = np.array([120, 150, 205], np.float32)  # BGR
+WALL = np.array([200, 120, 60], np.float32)  # a blue-ish background (BGR)
+INK = np.array([60, 40, 30], np.float32)
 
 
-def _scene(h=240, w=320):
-    """Skin with a soft shading gradient and fine grain, plus a dark tattoo with a faint halo and a thin outline."""
+def _arm_scene(h=240, w=360):
+    """A horizontal arm (skin with shading and grain) on a wall, with a tattoo in the middle of the arm."""
     rng = np.random.default_rng(3)
     y, x = np.mgrid[0:h, 0:w].astype(np.float32)
-    shade = 1.0 - 0.12 * (x / w)
-    img = SKIN[None, None, :] * shade[:, :, None] + rng.normal(0, 3.0, (h, w, 1))
-    core = np.zeros((h, w), np.float32)
-    cv2.ellipse(core, (160, 120), (40, 28), 20, 0, 360, 1.0, -1)
-    halo = (
-        cv2.dilate(core, np.ones((3, 3), np.uint8), iterations=6) - core
-    )  # faint ring around the ink
-    img = img * (1 - core[:, :, None]) + np.array([60, 40, 30], np.float32) * core[:, :, None]
-    img = (
-        img * (1 - 0.5 * halo[:, :, None])
-        + np.array([90, 100, 140], np.float32) * 0.5 * halo[:, :, None]
-    )
+    img = np.empty((h, w, 3), np.float32)
+    img[:] = WALL
+    arm = ((y > 70) & (y < 170)).astype(np.float32)  # the arm: rows 70..170
+    shade = 1.0 - 0.15 * ((y - 70) / 100.0).clip(0, 1)
+    skin = SKIN[None, None, :] * shade[:, :, None] + rng.normal(0, 3.0, (h, w, 1))
+    img = img * (1 - arm[:, :, None]) + skin * arm[:, :, None]
+    ink8 = np.zeros((h, w), np.uint8)
+    cv2.ellipse(ink8, (180, 120), (45, 24), 15, 0, 360, 255, -1)
+    cv2.putText(ink8, "X", (150, 135), cv2.FONT_HERSHEY_SIMPLEX, 1.2, 0, 3)  # a hole in the ink
+    ink = cv2.GaussianBlur(ink8.astype(np.float32) / 255.0, (0, 0), 0.8)
+    img = img * (1 - ink[:, :, None]) + INK * ink[:, :, None]
     img = np.clip(img, 0, 255).astype(np.uint8)
-    selection = cv2.erode(
-        core.astype(np.uint8), np.ones((3, 3), np.uint8), iterations=5
-    )  # misses the ink edge
-    return img, selection, core.astype(np.uint8), halo.astype(np.uint8)
+    inked = (ink > 0.5).astype(np.uint8)
+    # A sloppy brush stroke: covers the tattoo AND runs well off the arm onto the wall (rows 30..210).
+    sel = np.zeros((h, w), np.uint8)
+    sel[30:210, 110:260] = 1
+    return img, sel, inked, arm.astype(np.uint8)
 
 
 def _lab_dist(a, b):
@@ -42,106 +46,148 @@ def _lab_dist(a, b):
     return float(np.linalg.norm(la - lb))
 
 
-class TestSkinSample:
-    def test_median_matches_the_skin_not_the_ink(self):
-        img, sel, _, _ = _scene()
+class TestFindInk:
+    def test_ink_is_found_and_background_is_not(self):
+        img, sel, inked, arm = _arm_scene()
+        ink, skin, _ = T.find_ink(img, sel, 0.3)
+        assert (ink & inked).sum() > 0.9 * inked.sum()  # nearly all the tattoo
+        off_arm = (arm == 0) & (sel > 0)
+        assert (ink & off_arm.astype(np.uint8)).sum() == 0  # none of the wall inside the selection
+
+    def test_ink_is_only_inside_the_selection(self):
+        img, sel, _, _ = _arm_scene()
+        tight = np.zeros_like(sel)
+        tight[100:140, 140:200] = 1  # covers only part of the tattoo
+        ink, _, _ = T.find_ink(img, tight, 0.3)
+        assert ink[tight == 0].sum() == 0
+
+    def test_the_skin_colour_ignores_the_background_in_the_selection(self):
+        img, sel, _, _ = _arm_scene()
         lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB).astype(np.float32)
-        med, spread = T.skin_sample(lab, sel, 4)
-        skin_lab = cv2.cvtColor(np.uint8([[SKIN]]), cv2.COLOR_BGR2LAB).astype(np.float32)[0, 0]
-        assert np.linalg.norm(med - skin_lab) < 12 and spread < 8
+        roi = cv2.dilate(sel, np.ones((3, 3), np.uint8), iterations=20) > 0
+        med, _ = T.skin_colour(lab, T.skin_prior(img), roi)
+        skin_lab = cv2.cvtColor(np.uint8([[SKIN * 0.93]]), cv2.COLOR_BGR2LAB).astype(np.float32)[
+            0, 0
+        ]
+        wall_lab = cv2.cvtColor(np.uint8([[WALL]]), cv2.COLOR_BGR2LAB).astype(np.float32)[0, 0]
+        assert np.linalg.norm(med - skin_lab) < np.linalg.norm(med - wall_lab) / 3
 
-    def test_whole_picture_selected_is_an_error(self):
-        lab = np.zeros((20, 20, 3), np.float32)
-        with pytest.raises(ValidationError):
-            T.skin_sample(lab, np.ones((20, 20), np.uint8), 2)
+    def test_more_grow_catches_at_least_as_much(self):
+        img, sel, _, _ = _arm_scene()
+        low, _, _ = T.find_ink(img, sel, 0.0)
+        high, _, _ = T.find_ink(img, sel, 1.0)
+        assert high.sum() >= low.sum()
 
-
-class TestGrow:
-    def test_grow_catches_ink_the_selection_missed(self):
-        img, sel, core, _ = _scene()
-        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB).astype(np.float32)
-        med, spread = T.skin_sample(lab, sel, 4)
-        none = T.grow_selection(lab, sel, med, spread, 0.0, 4)
-        lots = T.grow_selection(lab, sel, med, spread, 1.0, 4)
-        assert (lots & core).sum() > (none & core).sum()
-        assert lots.sum() >= none.sum()
-
-    def test_growth_is_bounded(self):
-        img, sel, _, _ = _scene()
-        # An image that is mostly "not skin" must not make the mask swallow it.
-        img[:, :] = (20, 20, 20)
-        img[100:140, 140:180] = SKIN.astype(np.uint8)
-        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB).astype(np.float32)
-        med = np.array([150, 140, 150], np.float32)
-        grown = T.grow_selection(lab, sel, med, 2.0, 1.0, 4)
-        assert grown.sum() <= T.MAX_GROWTH * sel.sum()
+    def test_clean_skin_gives_no_ink(self):
+        img, _, _, _ = _arm_scene()
+        sel = np.zeros(img.shape[:2], np.uint8)
+        sel[85:105, 20:80] = 1  # a patch of plain arm, far from the tattoo
+        ink, _, _ = T.find_ink(img, sel, 0.3)
+        assert ink.sum() == 0
 
 
 class TestRemoveTattoo:
-    def test_tattoo_disappears(self):
-        img, sel, core, _ = _scene()
-        out = T.remove_tattoo(img, sel, grow=1.0, algorithm="telea")
-        inside = core > 0
-        assert _lab_dist(img[inside].mean(0), SKIN) > 40  # clearly inked before
-        assert _lab_dist(out[inside].mean(0), SKIN * 0.94) < 14  # looks like skin after
-
-    def test_faint_halo_is_caught_with_grow(self):
-        img, sel, _, halo = _scene()
-        h = halo > 0
-        skin = img[:30, :30].reshape(-1, 3).mean(0)
-        off = T.remove_tattoo(img, sel, grow=0.0, algorithm="telea")
-        on = T.remove_tattoo(img, sel, grow=1.0, algorithm="telea")
-        assert _lab_dist(on[h].mean(0), skin) < _lab_dist(off[h].mean(0), skin)
-
-    def test_pixels_far_away_are_untouched(self):
-        img, sel, _, _ = _scene()
+    def test_tattoo_becomes_skin(self):
+        img, sel, inked, _ = _arm_scene()
         out = T.remove_tattoo(img, sel, algorithm="telea")
-        assert np.array_equal(out[:20], img[:20]) and np.array_equal(out[:, :40], img[:, :40])
+        m = inked > 0
+        assert _lab_dist(img[m].mean(0), SKIN * 0.93) > 40  # clearly inked before
+        assert _lab_dist(out[m].mean(0), SKIN * 0.93) < 12  # skin-coloured after
 
-    def test_strength_zero_is_a_no_op_and_half_is_in_between(self):
-        img, sel, core, _ = _scene()
-        assert np.array_equal(T.remove_tattoo(img, sel, strength=0.0, algorithm="telea"), img)
-        full = T.remove_tattoo(img, sel, strength=1.0, algorithm="telea")
-        half = T.remove_tattoo(img, sel, strength=0.5, algorithm="telea")
-        c = core > 0
-        d = lambda a: _lab_dist(a[c].mean(0), SKIN * 0.94)  # noqa: E731
-        assert d(full) < d(half) < d(img)
+    def test_the_background_inside_the_selection_is_untouched_bit_for_bit(self):
+        # The bug this guards against: painting past the arm pulled wall colour into the fill.
+        img, sel, _, arm = _arm_scene()
+        out = T.remove_tattoo(img, sel, algorithm="telea")
+        wall = (arm == 0) & (sel > 0)
+        assert np.array_equal(out[wall], img[wall])
 
-    def test_fill_has_skin_like_grain_not_a_smooth_patch(self):
-        img, sel, core, _ = _scene()
+    def test_no_wall_colour_bleeds_into_the_arm(self):
+        img, sel, inked, _ = _arm_scene()
+        out = T.remove_tattoo(img, sel, algorithm="telea")
+        ring = (cv2.dilate(inked, np.ones((3, 3), np.uint8), iterations=6) > 0) & (inked == 0)
+        # The blue wall has a very different hue; a bleed would drag the fill toward it.
+        m = inked > 0
+        assert _lab_dist(out[m].mean(0), WALL) > _lab_dist(out[m].mean(0), SKIN * 0.93) * 3
+        assert ring.any()
+
+    def test_pixels_outside_the_selection_are_untouched(self):
+        img, sel, _, _ = _arm_scene()
+        out = T.remove_tattoo(img, sel, algorithm="telea")
+        assert np.array_equal(out[sel == 0], img[sel == 0])
+
+    def test_a_tight_selection_on_the_edge_of_the_arm_does_not_pull_in_the_wall(self):
+        img, _, _, arm = _arm_scene()
+        sel = np.zeros(img.shape[:2], np.uint8)
+        sel[55:110, 150:215] = 1  # runs off the top of the arm onto the wall
+        out = T.remove_tattoo(img, sel, algorithm="telea")
+        wall = (arm == 0) & (sel > 0)
+        assert np.array_equal(out[wall], img[wall])
+
+    def test_fill_has_skin_like_grain(self):
+        img, sel, inked, _ = _arm_scene()
         out = T.remove_tattoo(img, sel, algorithm="telea")
 
         def grain(a, m):
             l_ = cv2.cvtColor(a, cv2.COLOR_BGR2LAB).astype(np.float32)[:, :, 0]
             return float((l_ - cv2.GaussianBlur(l_, (0, 0), 1.5))[m].std())
 
-        inner = cv2.erode(core, np.ones((3, 3), np.uint8), iterations=8) > 0
-        outer = np.zeros_like(core, bool)
-        outer[:60, :60] = True
-        assert grain(out, inner) > 0.5 * grain(img, outer)  # a smooth fill would be near 0
+        inner = cv2.erode(inked, np.ones((3, 3), np.uint8), iterations=4) > 0
+        plain = np.zeros_like(inked, bool)
+        plain[85:105, 20:80] = True
+        assert grain(out, inner) > 0.5 * grain(img, plain)  # a smooth fill would be near 0
+
+    def test_strength_zero_is_a_no_op_and_half_is_in_between(self):
+        img, sel, inked, _ = _arm_scene()
+        assert np.array_equal(T.remove_tattoo(img, sel, strength=0.0, algorithm="telea"), img)
+        full, half = (
+            T.remove_tattoo(img, sel, strength=1.0, algorithm="telea"),
+            T.remove_tattoo(img, sel, strength=0.5, algorithm="telea"),
+        )
+        m = inked > 0
+        d = lambda a: _lab_dist(a[m].mean(0), SKIN * 0.93)  # noqa: E731
+        assert d(full) < d(half) < d(img)
 
     def test_deterministic(self):
-        img, sel, _, _ = _scene()
-        a = T.remove_tattoo(img, sel, algorithm="telea")
-        b = T.remove_tattoo(img, sel, algorithm="telea")
-        assert np.array_equal(a, b)
+        img, sel, _, _ = _arm_scene()
+        assert np.array_equal(
+            T.remove_tattoo(img, sel, algorithm="telea"),
+            T.remove_tattoo(img, sel, algorithm="telea"),
+        )
 
-    def test_empty_selection_returns_a_copy(self):
-        img, _, _, _ = _scene()
-        out = T.remove_tattoo(img, np.zeros(img.shape[:2], np.uint8), algorithm="telea")
+    def test_nothing_to_remove_returns_a_copy(self):
+        img, _, _, _ = _arm_scene()
+        sel = np.zeros(img.shape[:2], np.uint8)
+        sel[85:105, 20:80] = 1
+        out = T.remove_tattoo(img, sel, algorithm="telea")
         assert np.array_equal(out, img) and out is not img
+        empty = T.remove_tattoo(img, np.zeros(img.shape[:2], np.uint8), algorithm="telea")
+        assert np.array_equal(empty, img) and empty is not img
 
     def test_bad_inputs(self):
-        img, sel, _, _ = _scene()
+        img, sel, _, _ = _arm_scene()
         with pytest.raises(ValidationError):
-            T.remove_tattoo(img, sel.astype(np.float32))
+            T.remove_tattoo(img, sel.astype(np.float32), algorithm="telea")
         with pytest.raises(ValidationError):
-            T.remove_tattoo(img, sel[:10])
+            T.remove_tattoo(img, sel[:10], algorithm="telea")
 
     def test_alpha_channel_is_dropped_not_a_crash(self):
-        img, sel, _, _ = _scene()
+        img, sel, _, _ = _arm_scene()
         bgra = np.dstack([img, np.full(img.shape[:2], 255, np.uint8)])
         assert T.remove_tattoo(bgra, sel, algorithm="telea").shape == img.shape
+
+    def test_other_ink_colours_and_skin_tones(self):
+        # A dark-skinned arm with a red tattoo: the skin prior and the colour distance still separate them.
+        img, sel, inked, _ = _arm_scene()
+        dark = np.array([40, 70, 110], np.float32)
+        arm_rows = np.zeros(img.shape[:2], bool)
+        arm_rows[70:170] = True
+        recol = img.astype(np.float32)
+        recol[arm_rows & (inked == 0)] = dark * (0.9 + 0.1 * np.random.default_rng(1).random((1,)))
+        recol[inked > 0] = (30, 30, 200)  # red ink
+        recol = np.clip(recol, 0, 255).astype(np.uint8)
+        out = T.remove_tattoo(recol, sel, algorithm="telea")
+        m = inked > 0
+        assert _lab_dist(out[m].mean(0), dark) < 15
 
 
 class TestEndpoint:
@@ -154,34 +200,34 @@ class TestEndpoint:
         return client.post("/api/v1/tattoo", files=files, data={"algorithm": "telea", **data})
 
     def test_removes_and_returns_a_png(self, test_client: TestClient):
-        import base64
-
-        img, sel, core, _ = _scene()
-        r = self._post(test_client, img, sel, grow="1.0")
+        img, sel, inked, arm = _arm_scene()
+        r = self._post(test_client, img, sel)
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body["output_size"] == {"width": 320, "height": 240}
+        assert body["output_size"] == {"width": 360, "height": 240}
         out = cv2.imdecode(
             np.frombuffer(base64.b64decode(body["final"].split(",", 1)[1]), np.uint8),
             cv2.IMREAD_COLOR,
         )
-        assert _lab_dist(out[core > 0].mean(0), SKIN * 0.94) < 14
+        assert _lab_dist(out[inked > 0].mean(0), SKIN * 0.93) < 12
+        wall = (arm == 0) & (sel > 0)
+        assert np.array_equal(out[wall], img[wall])
 
     def test_empty_mask_is_422(self, test_client: TestClient):
-        img, sel, _, _ = _scene()
+        img, sel, _, _ = _arm_scene()
         assert self._post(test_client, img, np.zeros_like(sel)).status_code == 422
 
     def test_mask_size_mismatch_is_400(self, test_client: TestClient):
-        img, sel, _, _ = _scene()
+        img, sel, _, _ = _arm_scene()
         assert self._post(test_client, img, sel[:100]).status_code == 400
 
     def test_out_of_range_options_are_422(self, test_client: TestClient):
-        img, sel, _, _ = _scene()
+        img, sel, _, _ = _arm_scene()
         assert self._post(test_client, img, sel, strength=1.5).status_code == 422
         assert self._post(test_client, img, sel, grow=-0.1).status_code == 422
 
     def test_garbage_image_is_400(self, test_client: TestClient):
-        _, sel, _, _ = _scene()
+        _, sel, _, _ = _arm_scene()
         r = test_client.post(
             "/api/v1/tattoo",
             files={

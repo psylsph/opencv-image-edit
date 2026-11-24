@@ -245,12 +245,18 @@ Risks and limits:
 
 ## Backlog (not scheduled)
 
-- [x] **Tattoo removal** (1.16.0): *Remove Tattoo* group; tap/paint selection (shared tools) -> `POST /api/v1/tattoo`:
-      skin colour sampled from a ring well outside the selection, nearby pixels that look like skin mixed with the
-      tattoo's ink are added to the mask ("catch faint ink"), LaMa fill, skin grain re-added at the level measured on the
-      surrounding skin, soft edge, "amount removed" slider to fade instead of erase. Limits: tattoos running into hair
-      or clothing smear (the fill rebuilds hair badly); a global tone-matching step was tried and removed because it
-      pulled in colours from hair. To improve: hair-aware masks, curved-limb shading.
+- [x] **Tattoo removal** (1.16.0, reworked 1.18.0): *Remove Tattoo* group; tap (MobileSAM) or paint a selection ->
+      `POST /api/v1/tattoo`. The selection is only the *search area*: the dominant local skin colour is found (densest
+      colour peak, brightness weighted half so limb shading is followed), then ink = selected pixels that differ from
+      the local skin, are darker or more vivid than it, and have skin within reach in at least 6 of 8 directions (so a
+      loose mask running off the arm leaves the background untouched). Only those pixels are inpainted (LaMa, TELEA
+      fallback), grain is re-added at the skin's measured level, edges are soft, "amount removed" fades instead of
+      erasing, "catch faint ink" is more eager. Measured on a real photo with a drawn tattoo: tight/tapped selection
+      removes ~80% of the ink and changes nothing else; a loose selection that also covers long hair or a skin-coloured
+      wall can repaint some of that (the skin test cannot tell hair from ink by colour alone). Ideas: a tattoo-aware
+      model, per-component confirmation (show the detected ink and let the user veto), hair-aware masks.
+      Tried and dropped: filling from the ring around the selection (bled background in), a global tone-matching step
+      (pulled in hair colours), 'holes fully enclosed by skin' (too strict on JPEG noise).
 
 ## Cross-cutting rules
 
