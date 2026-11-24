@@ -666,3 +666,10 @@ class TestReplaceBackgroundEndpoint:
 
     def test_bad_colour_is_rejected(self, test_client: TestClient):
         assert self._post(test_client, {"mode": "color", "color": "red"}).status_code == 422
+
+
+def test_static_files_must_revalidate(test_client: TestClient):
+    # Safari otherwise serves a stale app.js after a rebuild (notably over plain http, where there's no service worker).
+    r = test_client.get("/")
+    assert r.status_code == 200
+    assert r.headers["cache-control"] == "no-cache"

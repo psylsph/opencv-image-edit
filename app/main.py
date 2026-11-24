@@ -60,6 +60,18 @@ def create_app() -> FastAPI:
         # JSONResponse, which quoted/escaped the text and broke scrapers).
         return Response(content=body, media_type=content_type)
 
+    @app.middleware("http")
+    async def revalidate_static(request: Request, call_next):
+        # Without a Cache-Control header Safari reuses its stored copy of the page and scripts for a long time
+        # (and plain-http origins get no service worker), so a rebuilt app never reaches the phone.
+        response = await call_next(request)
+        if not request.url.path.startswith(("/api/", "/metrics")) and response.status_code in (
+            200,
+            304,
+        ):
+            response.headers.setdefault("Cache-Control", "no-cache")
+        return response
+
     # Static files (web/) at root
     web_dir = Path(__file__).parent.parent / "web"
     if web_dir.exists():
