@@ -20,7 +20,7 @@ const state = {
   presets: {},
   currentPreset: null,
   processing: false,
-  live: { renderer: null, image: null, raf: 0, token: 0 },  // on-device preview (gl.js)
+  live: { renderer: null, image: null, raf: 0, token: 0, matteKey: null, matteBusy: null, matteFailed: null },  // on-device preview (gl.js)
   lastResult: null,
   inpaintResult: null,   // separate from main process result
   // Mask canvas drawing state
@@ -694,6 +694,7 @@ async function startLivePreview(file) {
   stopLivePreview();
   const token = ++state.live.token;
   const canvas = $("#live-canvas");
+  state.live.matteKey = state.live.matteBusy = state.live.matteFailed = null;
   try {
     if (!state.live.renderer) {
       state.live.renderer = createRenderer(canvas, (msg, err) => console.warn(msg, err));
@@ -705,6 +706,7 @@ async function startLivePreview(file) {
     if (token !== state.live.token) { image.source.close?.(); return; }  // a newer photo arrived meanwhile
     state.live.image = image;
     state.live.renderer.setImage(image);
+    state.live.renderer.setMask(null);
     scheduleLiveDraw();
   } catch (err) {
     // e.g. desktop Chrome can't decode HEIC: just keep the plain preview
@@ -733,6 +735,9 @@ function drawLive() {
   const canvas = $("#live-canvas");
   if (!renderer || !image || renderer.lost) return;
   const params = liveParams(collectSettings());
+  // Background blur/remove is live once the matte has arrived; painted-background selections still wait for Process.
+  if (!wantsMatte()) params.bg = null;
+  else syncMatte();
   const stack = $(".preview-stack");
   const dpr = Math.min(window.devicePixelRatio || 1, 3);
   // Fit the photo into the preview box (the <img> is at most 420 px tall), never above the source size.
@@ -741,7 +746,40 @@ function drawLive() {
   const h = Math.max(1, Math.round(image.source.height * k));
   if (!renderer.draw(params, w, h)) return;
   canvas.hidden = false;
+  const finding = !!params.bg && !renderer.hasMask;
   stack.classList.toggle("is-live", !isIdentity(params));
+  $(".live-badge").textContent = finding ? "Finding subject…" : "Live preview";
+}
+
+// The subject matte comes from the server once per photo + model (POST /api/v1/matte); everything after that,
+// blur strength included, is composited on the phone.
+const wantsMatte = () =>
+  $("#bg-enabled").checked && (document.querySelector("input[name='bg-source']:checked")?.value || "auto") === "auto";
+
+async function syncMatte() {
+  const live = state.live;
+  if (!live.renderer || !state.file || !live.image) return;
+  const key = `${state.file.name}|${state.file.size}|${state.file.lastModified}|${$("#bg-model")?.value || "u2netp"}`;
+  if (live.matteKey === key || live.matteBusy === key || live.matteFailed === key) return;
+  live.matteBusy = key;
+  const token = live.token;
+  try {
+    const form = new FormData();
+    form.append("file", state.file);
+    form.append("model_name", $("#bg-model")?.value || "u2netp");
+    const resp = await fetch("/api/v1/matte", { method: "POST", body: form });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const bmp = await createImageBitmap(await resp.blob());
+    if (token !== live.token || live.matteBusy !== key) { bmp.close?.(); return; }  // photo or model changed meanwhile
+    live.renderer.setMask(bmp);
+    live.matteKey = key;
+  } catch (err) {
+    console.warn("matte unavailable, background applies on Process:", err);
+    if (token === live.token) live.matteFailed = key;
+  } finally {
+    if (live.matteBusy === key) live.matteBusy = null;
+    if (token === live.token) scheduleLiveDraw();
+  }
 }
 
 let statusTimer = null;

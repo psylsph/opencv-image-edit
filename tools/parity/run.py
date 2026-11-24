@@ -3,7 +3,7 @@
 
     python3 tools/parity/run.py [case ...] [--keep DIR] [--chrome /path/to/chromium]
 
-Each case renders the same synthetic photo through app/pipeline (grain.py, filters.py) and through gl.js in headless
+Each case renders the same synthetic photo through app/pipeline (background.py, grain.py, filters.py) and through gl.js in headless
 Chromium (SwiftShader, so no GPU needed) and compares the pictures. Needs numpy, opencv and Pillow (see
 requirements.txt) and a Chromium/Chrome binary. Not part of pytest: it needs a browser. Run it after changing gl.js or
 the filter/grain maths. Exit status 1 when a case drifts more than its threshold.
@@ -45,8 +45,9 @@ def _load(name):
     return mod
 
 
-_filters, _grain = _load("filters"), _load("grain")
+_filters, _grain, _bg = _load("filters"), _load("grain"), _load("background")
 add_vignette, apply_color_adjustments = _filters.add_vignette, _filters.apply_color_adjustments
+apply_background_blur = _bg.apply_background_blur
 apply_grayscale, apply_sepia, apply_grain = (
     _filters.apply_grayscale,
     _filters.apply_sepia,
@@ -95,7 +96,14 @@ CASES = {
         sepia=True,
     ),
     "grain": {"grain": {"enabled": True, "intensity": 0.6}},
+    "bg_blur_small": {"background": {"enabled": True, "mode": "blur", "blur_strength": 4}},
+    "bg_blur_large": {"background": {"enabled": True, "mode": "blur", "blur_strength": 25}},
+    "bg_blur_plus_filters": {
+        "background": {"enabled": True, "mode": "blur", "blur_strength": 12},
+        "filters": F(brightness=1.2, saturation=1.3)["filters"],
+    },
 }
+LOOSE.update({"bg_blur_small": 3.0, "bg_blur_large": 4.0, "bg_blur_plus_filters": 4.0})
 
 
 def photo(w=640, h=480):
@@ -111,8 +119,18 @@ def photo(w=640, h=480):
     return np.clip(img, 0, 255).astype(np.uint8)  # RGB
 
 
+def matte(w=640, h=480):
+    """A soft-edged 8-bit matte (what /api/v1/matte returns): a disc around the red circle."""
+    m = np.zeros((h, w), np.float32)
+    cv2.circle(m, (w // 3, h // 2), 100, 1.0, -1)
+    return (cv2.GaussianBlur(m, (0, 0), 6) * 255 + 0.5).astype(np.uint8)
+
+
 def server_render(rgb, s):
     bgr = rgb[:, :, ::-1].copy()
+    b = s.get("background")
+    if b and b["enabled"]:
+        bgr = apply_background_blur(bgr, matte().astype(np.float32) / 255.0, b["blur_strength"])
     g = s.get("grain")
     if g and g["enabled"]:
         bgr, _ = apply_grain(bgr, g["intensity"], seed=1)
@@ -131,7 +149,8 @@ def server_render(rgb, s):
 
 
 def browser_render(chrome, base, img_path, s):
-    url = f"{base}/tools/parity/page.html?img={urllib.parse.quote(img_path)}&s={urllib.parse.quote(json.dumps(s))}"
+    mask = "&mask=/matte.png" if s.get("background") else ""
+    url = f"{base}/tools/parity/page.html?img={urllib.parse.quote(img_path)}{mask}&s={urllib.parse.quote(json.dumps(s))}"
     for attempt in range(3):  # headless Chromium sometimes dumps the DOM before the module has run
         profile = tempfile.mkdtemp(prefix="parity-chrome-")
         try:
@@ -222,6 +241,7 @@ def main():
     (work / "tools").symlink_to(ROOT / "tools")
     rgb = photo()
     Image.fromarray(rgb).save(work / "photo.png")
+    Image.fromarray(matte()).save(work / "matte.png")
 
     class Quiet(http.server.SimpleHTTPRequestHandler):
         def log_message(self, *args):

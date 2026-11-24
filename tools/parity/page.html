@@ -2,7 +2,7 @@
 <meta charset="utf-8">
 <pre id="out">pending</pre>
 <script type="module">
-// Parity page: renders ?img=<url> with settings ?s=<json> through web/gl.js and prints the PNG as a data URL.
+// Parity page: renders ?img=<url> (and optional ?mask=<url>) with settings ?s=<json> through web/gl.js and prints the PNG as a data URL.
 import { createRenderer, liveParams, loadSource } from "/web/gl.js";
 const q = new URLSearchParams(location.search);
 const out = document.getElementById("out");
@@ -13,6 +13,7 @@ try {
   if (!r) throw new Error("no webgl2");
   const image = await loadSource(blob);
   r.setImage(image);
+  if (q.get("mask")) r.setMask(await createImageBitmap(await (await fetch(q.get("mask"))).blob()));
   r.draw(liveParams(JSON.parse(q.get("s"))), image.source.width, image.source.height);
   out.textContent = cv.toDataURL("image/png"); // same task as draw(): the drawing buffer is still there
 } catch (e) {

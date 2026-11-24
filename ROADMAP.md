@@ -75,13 +75,17 @@ Work items:
 **Matte caching** (the key idea from vid-ed-mobile): the expensive part is the mask, and it doesn't change when the user
 moves a blur slider or swaps a background. So:
 
-- [ ] New `POST /api/v1/matte` returns just the mask (8-bit PNG, or an alpha-in-PNG), keyed by image hash + model.
-- [ ] Client keeps the mask and does all compositing locally; the server is called again only if the image, model or
+- [x] New `POST /api/v1/matte` returns just the mask (8-bit grayscale PNG at the server's processing size). *(1.11.0; the client caches it per photo + model)*
+- [x] Client keeps the mask and does all compositing locally (blur and remove-preview, strength live); the server is called again only if the image, model or
       painted selection changes.
 - [ ] `/process` stays for "full server render" and as the fallback.
 
 **Done when:** dragging any colour/grain/vignette/blur slider updates the preview at ≥ 30 fps on a mid-range phone with
 no request in flight, and the downloaded PNG matches the server render within tolerance.
+
+**Known gaps after 1.11.0:** painted-background selections (Paint BG) still wait for Process; the first matte with
+BiRefNet Tiny takes seconds on this CPU (U2NetP is ~0.7 s), so the badge shows "Finding subject…" meanwhile; Process
+still recomputes the matte on the server (next: send the cached matte back so Process reuses it).
 
 ## Phase 2: Replace the background with another image
 

@@ -511,3 +511,70 @@ class TestBlurEndpoint:
             },
         )
         assert r.status_code == 400
+
+
+class TestMatteEndpoint:
+    """``POST /api/v1/matte`` returns only the subject mask (used by the browser's live compositor)."""
+
+    @staticmethod
+    def _png(arr):
+        return cv2.imencode(".png", arr)[1].tobytes()
+
+    def test_matte_is_grayscale_png_at_process_size(self, test_client: TestClient, monkeypatch):
+        calls = {}
+
+        class Stub:
+            def predict(self, img):
+                calls["shape"] = img.shape
+                m = np.zeros(img.shape[:2], np.float32)
+                m[:, : img.shape[1] // 2] = 1.0
+                return m
+
+        monkeypatch.setattr(
+            "app.api.matte.get_matting_model",
+            lambda name: calls.setdefault("name", name) and Stub(),
+        )
+        img = np.full((48, 64, 3), 90, np.uint8)
+        r = test_client.post(
+            "/api/v1/matte",
+            files={"file": ("a.png", self._png(img), "image/png")},
+            data={"model_name": "u2netp"},
+        )
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "image/png"
+        out = cv2.imdecode(np.frombuffer(r.content, np.uint8), cv2.IMREAD_UNCHANGED)
+        assert out.shape == (48, 64) and out.dtype == np.uint8
+        assert out[:, 0].min() == 255 and out[:, -1].max() == 0
+        assert calls["name"] == "u2netp"
+        assert r.headers["x-matte-width"] == "64" and r.headers["x-matte-height"] == "48"
+
+    def test_matte_matches_downsized_process_image(self, test_client: TestClient, monkeypatch):
+        seen = {}
+
+        class Stub:
+            def predict(self, img):
+                seen["shape"] = img.shape
+                return np.ones(img.shape[:2], np.float32)
+
+        monkeypatch.setattr("app.api.matte.get_matting_model", lambda name: Stub())
+        big = np.full((100, 3200, 3), 50, np.uint8)  # wider than MAX_IMAGE_DIMENSION (1536)
+        r = test_client.post(
+            "/api/v1/matte", files={"file": ("a.png", self._png(big), "image/png")}
+        )
+        assert r.status_code == 200
+        assert max(seen["shape"][:2]) <= 1536
+
+    def test_matte_rejects_garbage(self, test_client: TestClient):
+        r = test_client.post(
+            "/api/v1/matte", files={"file": ("a.png", b"not an image", "image/png")}
+        )
+        assert r.status_code == 400
+
+    def test_matte_unknown_model_is_an_error(self, test_client: TestClient):
+        img = np.zeros((20, 20, 3), np.uint8)
+        r = test_client.post(
+            "/api/v1/matte",
+            files={"file": ("a.png", self._png(img), "image/png")},
+            data={"model_name": "nope"},
+        )
+        assert r.status_code >= 400

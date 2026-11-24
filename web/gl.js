@@ -6,6 +6,9 @@
 // Known, accepted differences: the noise generator is a hash (not numpy's RNG), the blur edge handling
 // is clamp (OpenCV reflects), and the preview runs at screen resolution rather than the processed size.
 //
+// Background blur / remove use a matte fetched once from the server (POST /api/v1/matte): the subject mask doesn't
+// change when sliders move, so the blur strength and the composite are live on the phone.
+//
 // Everything is `highp`: Apple GPUs run `mediump` as 16-bit floats, which bands visibly.
 
 const MAX_SOURCE = 2048; // longest edge of the texture kept for previewing (memory friendly on phones)
@@ -57,6 +60,27 @@ void main() {
     c = mx - (mx - c) * k;
   }
   o = vec4(c, 1.0);
+}`;
+
+// Background: subject over (blurred copy | checkerboard for "remove"), using the server's matte.
+const FRAG_BG = `#version 300 es
+precision highp float;
+uniform sampler2D uSrc, uBlur, uMask;
+uniform float uMode;   // 0 = blur, 1 = remove (shown over a checkerboard)
+uniform vec2 uSize;
+in vec2 uv;
+out vec4 o;
+void main() {
+  vec3 s = texture(uSrc, uv).rgb;
+  float m = texture(uMask, uv).r;
+  vec3 bg;
+  if (uMode > 0.5) {
+    vec2 g = floor(uv * uSize / 16.0);
+    bg = vec3(mix(0.80, 0.62, mod(g.x + g.y, 2.0)));
+  } else {
+    bg = texture(uBlur, vec2(uv.x, 1.0 - uv.y)).rgb;  // uBlur was rendered, so its rows run the other way
+  }
+  o = vec4(mix(bg, s, m), 1.0);
 }`;
 
 // Separable gaussian (one direction per pass).
@@ -111,7 +135,9 @@ export function liveParams(settings) {
   const g = settings.grain || {};
   const f = settings.filters || {};
   const fOn = !!f.enabled;
+  const b = settings.background || {};
   return {
+    bg: b.enabled ? { mode: b.mode === "remove" ? "remove" : "blur", strength: Math.max(1, Number(b.blur_strength) || 15) } : null,
     grain: g.enabled ? Math.max(0, Number(g.intensity) || 0) : 0,
     brightness: fOn ? Number(f.brightness) : 1,
     contrast: fOn ? Number(f.contrast) : 1,
@@ -125,7 +151,7 @@ export function liveParams(settings) {
 
 /** True when `params` would leave the picture unchanged. */
 export function isIdentity(p) {
-  return !p.grain && p.brightness === 1 && p.contrast === 1 && p.saturation === 1 &&
+  return !p.bg && !p.grain && p.brightness === 1 && p.contrast === 1 && p.saturation === 1 &&
     p.sharpness === 1 && !p.vignette && !p.sepia && !p.gray;
 }
 
@@ -159,6 +185,7 @@ export function createRenderer(canvas, onError = () => {}) {
     progs = {
       base: program(gl, VERT, FRAG_BASE),
       blur: program(gl, VERT, FRAG_BLUR),
+      bg: program(gl, VERT, FRAG_BG),
       final: program(gl, VERT, FRAG_FINAL),
     };
   } catch (err) {
@@ -173,8 +200,11 @@ export function createRenderer(canvas, onError = () => {}) {
   let srcTex = null;
   let src = null;      // {source, width, height} so a lost context can be rebuilt
   let lost = false;
-  const targets = []; // three ping-pong render targets at output size
-  let tw = 0, th = 0;
+  let maskTex = null;
+  let maskSrc = null;  // kept so a lost context can rebuild the texture
+  const targets = []; // four render targets at output size
+  const small = [];   // two quarter-ish size targets for the (downsampled) background blur
+  let tw = 0, th = 0, sw = 0, sh = 0;
 
   function makeTarget(w, h) {
     const tex = gl.createTexture();
@@ -194,8 +224,30 @@ export function createRenderer(canvas, onError = () => {}) {
     if (w === tw && h === th && targets.length) return;
     for (const t of targets) { gl.deleteTexture(t.tex); gl.deleteFramebuffer(t.fbo); }
     targets.length = 0;
-    for (let i = 0; i < 3; i++) targets.push(makeTarget(w, h));
+    for (let i = 0; i < 4; i++) targets.push(makeTarget(w, h));
     tw = w; th = h;
+  }
+
+  function ensureSmall(w, h) {
+    if (w === sw && h === sh && small.length) return;
+    for (const t of small) { gl.deleteTexture(t.tex); gl.deleteFramebuffer(t.fbo); }
+    small.length = 0;
+    for (let i = 0; i < 2; i++) small.push(makeTarget(w, h));
+    sw = w; sh = h;
+  }
+
+  function uploadMask() {
+    if (maskTex) gl.deleteTexture(maskTex);
+    maskTex = null;
+    if (!maskSrc) return;
+    maskTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, maskTex);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, maskSrc);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   }
 
   function uploadSource() {
@@ -211,10 +263,10 @@ export function createRenderer(canvas, onError = () => {}) {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   }
 
-  function pass(prog, target, textures, setUniforms) {
+  function pass(prog, target, textures, setUniforms, vw = tw, vh = th) {
     gl.useProgram(prog.id);
     gl.bindFramebuffer(gl.FRAMEBUFFER, target ? target.fbo : null);
-    gl.viewport(0, 0, tw, th);
+    gl.viewport(0, 0, vw, vh);
     textures.forEach((t, i) => {
       gl.activeTexture(gl.TEXTURE0 + i);
       gl.bindTexture(gl.TEXTURE_2D, t);
@@ -238,14 +290,16 @@ export function createRenderer(canvas, onError = () => {}) {
       progs = {
         base: program(gl, VERT, FRAG_BASE),
         blur: program(gl, VERT, FRAG_BLUR),
+        bg: program(gl, VERT, FRAG_BG),
         final: program(gl, VERT, FRAG_FINAL),
       };
     } catch (err) { onError("webgl restore failed", err); return; }
     quad = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, quad);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-    targets.length = 0; tw = th = 0;
+    targets.length = 0; small.length = 0; tw = th = sw = sh = 0;
     if (src) uploadSource();
+    uploadMask();
     lost = false;
     api.onrestored?.();
   });
@@ -262,14 +316,58 @@ export function createRenderer(canvas, onError = () => {}) {
       if (!lost) uploadSource();
     },
 
+    /** Set (or clear with null) the subject matte: an ImageBitmap/canvas whose red channel is 255 on the subject. */
+    setMask(mask) {
+      if (maskSrc && maskSrc !== mask) maskSrc.close?.();
+      maskSrc = mask;
+      if (!lost) uploadMask();
+    },
+
+    get hasMask() { return !!maskSrc; },
+
     /** Draw `params` (from liveParams) at `w`x`h` canvas pixels. */
     draw(params, w, h) {
       if (lost || !src) return false;
       if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
       ensureTargets(w, h);
-      const [A, B, C] = targets;
-      pass(progs.base, A, [srcTex], (u) => {
-        u("uFlip", 1);
+      const [A, B, C, D] = targets;
+      const serverW = src.width * Math.min(1, SERVER_MAX / Math.max(src.width, src.height));
+      const blurPass = (from, to, dx, dy, sigma, flip, bw, bh) => pass(progs.blur, to, [from], (u) => {
+        u("uFlip", flip);
+        u("uStep", dx / bw, dy / bh);
+        u("uSigma", sigma);
+        gl.uniform1i(gl.getUniformLocation(progs.blur.id, "uTex"), 0);
+      }, bw, bh);
+
+      // Background (needs the matte): the server blurs with sigma = strength px at its processing size.
+      let input = srcTex;
+      let inputFlip = 1;
+      if (params.bg && maskTex) {
+        let blurTex = null;
+        if (params.bg.mode === "blur") {
+          const sigma = Math.max(0.3, (params.bg.strength * w) / serverW);
+          const f = Math.max(1, sigma / 5); // big blurs run on a smaller copy (much cheaper, looks the same)
+          const bw = Math.max(1, Math.round(w / f));
+          const bh = Math.max(1, Math.round(h / f));
+          ensureSmall(bw, bh);
+          blurPass(srcTex, small[0], 1, 0, sigma / f, 1, bw, bh);
+          blurPass(small[0].tex, small[1], 0, 1, sigma / f, 0, bw, bh);
+          blurTex = small[1].tex;
+        }
+        pass(progs.bg, D, [srcTex, blurTex || srcTex, maskTex], (u) => {
+          u("uFlip", 1);
+          u("uMode", params.bg.mode === "remove" ? 1 : 0);
+          u("uSize", w, h);
+          gl.uniform1i(gl.getUniformLocation(progs.bg.id, "uSrc"), 0);
+          gl.uniform1i(gl.getUniformLocation(progs.bg.id, "uBlur"), 1);
+          gl.uniform1i(gl.getUniformLocation(progs.bg.id, "uMask"), 2);
+        });
+        input = D.tex;
+        inputFlip = 0;
+      }
+
+      pass(progs.base, A, [input], (u) => {
+        u("uFlip", inputFlip);
         u("uSize", w, h);
         u("uGrain", params.grain);
         u("uBright", params.brightness);
@@ -281,16 +379,9 @@ export function createRenderer(canvas, onError = () => {}) {
       let blurred = A.tex;
       if (params.sharpness !== 1) {
         // The server's sigma is 2 px at the (<= 1536 px) processed size; scale it to this output size.
-        const serverW = src.width * Math.min(1, SERVER_MAX / Math.max(src.width, src.height));
         const sigma = Math.max(0.3, (2 * w) / serverW);
-        const blurPass = (from, to, dx, dy) => pass(progs.blur, to, [from], (u) => {
-          u("uFlip", 0);
-          u("uStep", dx / w, dy / h);
-          u("uSigma", sigma);
-          gl.uniform1i(gl.getUniformLocation(progs.blur.id, "uTex"), 0);
-        });
-        blurPass(A.tex, B, 1, 0);
-        blurPass(B.tex, C, 0, 1);
+        blurPass(A.tex, B, 1, 0, sigma, 0, w, h);
+        blurPass(B.tex, C, 0, 1, sigma, 0, w, h);
         blurred = C.tex;
       }
       pass(progs.final, null, [A.tex, blurred], (u) => {
@@ -308,6 +399,8 @@ export function createRenderer(canvas, onError = () => {}) {
     destroy() {
       src?.source?.close?.();
       src = null;
+      maskSrc?.close?.();
+      maskSrc = null;
       gl.getExtension("WEBGL_lose_context")?.loseContext();
     },
   };
