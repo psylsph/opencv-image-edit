@@ -9,6 +9,8 @@
 //   - tabbed result display (final + 5 debug views)
 //   - PWA service worker registration
 
+import { createRenderer, isIdentity, liveParams, loadSource } from "./gl.js";
+
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
@@ -18,6 +20,7 @@ const state = {
   presets: {},
   currentPreset: null,
   processing: false,
+  live: { renderer: null, image: null, raf: 0, token: 0 },  // on-device preview (gl.js)
   lastResult: null,
   inpaintResult: null,   // separate from main process result
   // Mask canvas drawing state
@@ -141,6 +144,12 @@ function bindEvents() {
   $("#rot-cw").addEventListener("click", () => transformImage("cw"));
   $("#flip-h").addEventListener("click", () => transformImage("flipH"));
   $("#flip-v").addEventListener("click", () => transformImage("flipV"));
+
+  // Live preview redraws on any control change (sliders fire "input", toggles fire "change")
+  const controls = $(".controls-section");
+  controls.addEventListener("input", scheduleLiveDraw);
+  controls.addEventListener("change", scheduleLiveDraw);
+  new ResizeObserver(scheduleLiveDraw).observe($(".preview-stack"));
 
   // "On" badges follow the enable checkboxes (programmatic changes call it too)
   $(".controls-section").addEventListener("change", syncGroupBadges);
@@ -480,6 +489,7 @@ function loadFile(file) {
 
   $("#preview-container").hidden = false;
   $("#upload-btn").hidden = true;
+  startLivePreview(file);
 
   // Reset mask on new file
   clearClickSelection();
@@ -534,6 +544,7 @@ async function transformImage(op) {
 }
 
 function clearFile() {
+  stopLivePreview();
   state.file = null;
   if (state.previewUrl) {
     URL.revokeObjectURL(state.previewUrl);
@@ -672,6 +683,65 @@ function applyPreset(name) {
   if (paintControls) paintControls.hidden = !$("#painting").checked;
   $("#filters-enabled").dispatchEvent(new Event("change"));
   syncGroupBadges();
+  scheduleLiveDraw();
+}
+
+// --- On-device live preview (WebGL) ---
+// Grain, colour filters, sharpness, vignette and sepia are drawn in the browser as you drag the sliders.
+// Background blur/removal and the AI steps (upscale, anime, painting, inpaint) still happen on Process.
+
+async function startLivePreview(file) {
+  stopLivePreview();
+  const token = ++state.live.token;
+  const canvas = $("#live-canvas");
+  try {
+    if (!state.live.renderer) {
+      state.live.renderer = createRenderer(canvas, (msg, err) => console.warn(msg, err));
+      if (!state.live.renderer) return;  // no WebGL2: the plain <img> and the server do the work
+      state.live.renderer.onlost = () => { canvas.hidden = true; };
+      state.live.renderer.onrestored = () => { canvas.hidden = false; scheduleLiveDraw(); };
+    }
+    const image = await loadSource(file);
+    if (token !== state.live.token) { image.source.close?.(); return; }  // a newer photo arrived meanwhile
+    state.live.image = image;
+    state.live.renderer.setImage(image);
+    scheduleLiveDraw();
+  } catch (err) {
+    // e.g. desktop Chrome can't decode HEIC: just keep the plain preview
+    console.warn("live preview unavailable:", err);
+    canvas.hidden = true;
+  }
+}
+
+function stopLivePreview() {
+  state.live.token++;
+  state.live.image = null;
+  cancelAnimationFrame(state.live.raf);
+  state.live.raf = 0;
+  const canvas = $("#live-canvas");
+  if (canvas) canvas.hidden = true;
+}
+
+function scheduleLiveDraw() {
+  if (state.live.raf || !state.live.image) return;
+  state.live.raf = requestAnimationFrame(drawLive);
+}
+
+function drawLive() {
+  state.live.raf = 0;
+  const { renderer, image } = state.live;
+  const canvas = $("#live-canvas");
+  if (!renderer || !image || renderer.lost) return;
+  const params = liveParams(collectSettings());
+  const stack = $(".preview-stack");
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  // Fit the photo into the preview box (the <img> is at most 420 px tall), never above the source size.
+  const k = Math.min(1, (stack.clientWidth * dpr) / image.source.width, (420 * dpr) / image.source.height);
+  const w = Math.max(1, Math.round(image.source.width * k));
+  const h = Math.max(1, Math.round(image.source.height * k));
+  if (!renderer.draw(params, w, h)) return;
+  canvas.hidden = false;
+  stack.classList.toggle("is-live", !isIdentity(params));
 }
 
 let statusTimer = null;

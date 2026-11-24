@@ -26,5 +26,10 @@ Guidance for AI coding agents (and humans) working in this repo.
 
 ## Frontend
 
+- `web/gl.js` is the on-device live preview (WebGL2). It mirrors `app/pipeline/grain.py` + `filters.py`; after
+  changing either side run `python tools/parity/run.py` (needs numpy, opencv, Pillow and Chromium; it needs no GPU)
+  and add a case for every new effect. The server is the reference. `apply_sepia()` applies its kernel to BGR, so its
+  red/blue inputs are swapped versus the textbook matrix; the shader copies that on purpose.
+- Shaders use `highp` only (iPhone GPUs run `mediump` as 16-bit). Target device is an iPhone 14 Pro (see `ROADMAP.md`).
 - Mobile-first vanilla JS/CSS in `web/`, no build step. Keep tap targets
   ≥ 44px and check layout at phone width.

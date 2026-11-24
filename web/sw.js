@@ -3,7 +3,7 @@
 // - Network-first (no cache) for /api/* (always fresh results)
 // - Bumping CACHE_VERSION invalidates old caches.
 
-const CACHE_VERSION = "v21";
+const CACHE_VERSION = "v22";
 const CACHE_NAME = `opencv-image-edit-${CACHE_VERSION}`;
 
 const APP_SHELL = [
@@ -11,6 +11,7 @@ const APP_SHELL = [
   "/index.html",
   "/style.css",
   "/app.js",
+  "/gl.js",
   "/manifest.webmanifest",
   "/icons/icon-192.png",
   "/icons/icon-512.png",

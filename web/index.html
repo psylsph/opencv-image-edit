@@ -12,7 +12,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="style.css?v=22" />
+  <link rel="stylesheet" href="style.css?v=23" />
 </head>
 <body>
   <main class="app">
@@ -31,6 +31,8 @@
       <div id="preview-container" hidden>
         <div class="preview-stack">
           <img id="preview" alt="Uploaded preview" />
+          <canvas id="live-canvas" aria-hidden="true" hidden></canvas>
+          <span class="live-badge" aria-hidden="true">Live preview</span>
           <canvas id="mask-canvas" hidden></canvas>
         </div>
         <div class="transform-bar" role="group" aria-label="Rotate and flip">
@@ -326,6 +328,6 @@
     </button>
   </nav>
 
-  <script type="module" src="app.js?v=31"></script>
+  <script type="module" src="app.js?v=32"></script>
 </body>
 </html>
