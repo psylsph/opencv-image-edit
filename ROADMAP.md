@@ -184,27 +184,42 @@ being edited. Decisions: swap from another photo; go straight to the neural engi
 How it works (server, `app/models/face.py` + `app/pipeline/face.py`):
 
 1. **Detect** with `cv2.FaceDetectorYN` (YuNet, 0.2 MB): box + 5 landmarks; faces are numbered left to right.
-2. **Identity**: ArcFace `w600k_r50` embeds the donor face; the `inswapper_128` embedding map turns it into the latent.
-3. **Swap**: the target face is aligned to the 128 px ArcFace layout, `inswapper_128` renders the donor identity on it,
-   a LAB colour match (Reinhard, inside the face mask) pulls the skin tone toward the photo, then it is pasted back
-   through a soft elliptical mask (only the face's bounding box is warped, so big photos stay cheap).
-4. **Sharpen** (optional): GFPGAN 1.4 re-renders the pasted face on a 512 px FFHQ-aligned crop and is blended back.
-5. Runs **before** background, grain and filters so those unify the result. The cached matte stays valid.
+2. **Identity**: ArcFace `w600k_r50` embeds the donor face (unit-length 512-d vector).
+3. **Swap** (1.15.0: **HyperSwap 1c, 256 px**; InSwapper 128 is the fallback if it is the only swapper installed): the
+   target face is aligned with the layout the generators were trained on (`SWAP_FRACTIONS`, a bit more margin than
+   ArcFace's own 112 layout), the generator renders the donor identity, a LAB colour match pulls skin tone toward the
+   photo, and it is pasted back through the generator's own face mask times a soft ellipse (never touching the crop
+   border, which used to leave a line across the forehead).
+4. **Sharpen** (optional, default 0.3): GFPGAN 1.4 on a 512 px FFHQ-aligned crop, blended back.
+5. **Hair** (optional): BiSeNet face parsing finds hair on both people in a wide head crop. The target's hair is erased
+   by LaMa inpainting (not the face), the donor's hair is pasted over, scaled/rotated to the target's head by the same
+   landmark alignment, never over eyes/nose/mouth, and faded before the crop border.
+6. Runs **before** background, grain and filters so those unify the result. The cached matte stays valid.
+
+Why 1.15.0 changed the engine: measured with ArcFace cosine similarity (does the result look like the donor?), the
+1.13 setup scored 0.60 on five test pairs; using the right alignment layout alone gave 0.80 with InSwapper, and
+HyperSwap 1c gives 0.76 with a much cleaner, sharper face. Restorer and colour match both *lowered* identity (0.67 ->
+0.60 at strength 0.8/0.5), so their defaults dropped to 0.3. `tools`-style experiments live in the session notes; rerun
+the measurement (embed result vs donor) when changing the engine.
 
 API: `POST /api/v1/faces` (boxes + landmarks, same frame as process), `GET /api/v1/faces/status` (models installed?),
 and `face` settings + `face_donor` upload on `POST /api/v1/process` (`enabled`, `target`, `donor`, `blend`,
 `color_match`, `restore`). 422 with a readable message when no face is found in either photo or an index is out of range.
 
 UI: **Face swap** group with donor picker, numbered tappable rings on the photo, face chips when there are several faces,
-and sliders for edge softness, skin-tone match and sharpening. Takes about 4 s on this CPU (11 s with everything).
+"Also take their hair", and sliders for edge softness, skin-tone match and sharpening. About 5 s on this CPU for the
+face, 7-15 s with hair.
 
-Models (~1.1 GB, `scripts/download_models.py`): YuNet, ArcFace, `inswapper_128`, GFPGAN 1.4. **They land in the image
+Models (~1 GB, `scripts/download_models.py`): YuNet, ArcFace, HyperSwap 1c, GFPGAN 1.4, BiSeNet (hair); LaMa (already
+there for Remove Object) erases the old hair. **They land in the image
 build, but the `model-cache` volume hides them on an existing install**; copy them in with
 `docker cp <file> opencv-image-edit:/home/app/models/` (or run `scripts/download_models.py /home/app/models` inside
 the container). `GET /api/v1/faces/status` tells you what is missing.
 
 Next:
 
+- [ ] Hair limits to improve: hats on the target or donor, long hair over busy backgrounds (inpaint smears), donors whose
+      shoulders the parser calls hair. A cleaner hair matte (matting instead of parsing) and colour-matching the donor's hair.
 - [ ] Live local composite: the server returns just the swapped face patch + mask + placement and `gl.js` composites it,
       so edge softness / skin-tone sliders become live.
 - [ ] Several faces at once ("swap all", one donor per face).
@@ -214,7 +229,8 @@ Next:
 
 Risks and limits:
 
-- **Licences:** `inswapper_128` weights are non-commercial research only. Fine for a private home tool, not if this app is
+- **Licences:** `inswapper_128` weights are non-commercial research only; HyperSwap/BiSeNet/GFPGAN/ArcFace have their own
+  terms (check before redistributing). Fine for a private home tool, not if this app is
   ever distributed or sold. GFPGAN and ArcFace weights have their own terms; check before redistributing anything.
 - **Consent:** the UI says to use faces only with the person's permission. Nothing is stored server-side.
 - **Quality limits:** profile views, heavy occlusion (hands, hair, sunglasses) and strong lighting differences look worse.

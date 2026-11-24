@@ -104,17 +104,21 @@
             <span>Use which face from the new photo?</span>
             <div class="face-chips" id="face-donor-chips" role="group" aria-label="Face to use"></div>
           </div>
+          <label class="checkbox-row" id="face-hair-row">
+            <input type="checkbox" id="face-hair" />
+            <span>Also take their hair (best with a plain background and no hat)</span>
+          </label>
           <label class="slider-row">
             <span>Soften edge <output id="face-blend-value">0.50</output></span>
             <input type="range" id="face-blend" min="0" max="1" step="0.05" value="0.5" />
           </label>
           <label class="slider-row">
-            <span>Match skin tone <output id="face-color-value">0.50</output></span>
-            <input type="range" id="face-color" min="0" max="1" step="0.05" value="0.5" />
+            <span>Match skin tone <output id="face-color-value">0.30</output></span>
+            <input type="range" id="face-color" min="0" max="1" step="0.05" value="0.3" />
           </label>
           <label class="slider-row" id="face-restore-row">
-            <span>Sharpen face <output id="face-restore-value">0.80</output></span>
-            <input type="range" id="face-restore" min="0" max="1" step="0.05" value="0.8" />
+            <span>Sharpen face <output id="face-restore-value">0.30</output></span>
+            <input type="range" id="face-restore" min="0" max="1" step="0.05" value="0.3" />
           </label>
           <p class="face-note">Runs on the server when you tap Process (a few seconds). Only use faces of people who are happy for you to.</p>
         </div>
@@ -409,6 +413,6 @@
     </button>
   </nav>
 
-  <script type="module" src="app.js?v=39"></script>
+  <script type="module" src="app.js?v=40"></script>
 </body>
 </html>

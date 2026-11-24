@@ -80,6 +80,77 @@ class TestMasks:
         assert ((hard > 0.05) & (hard < 0.95)).sum() < ((soft > 0.05) & (soft < 0.95)).sum()
 
 
+class TestSwapGeometry:
+    def test_swap_template_is_inside_the_crop_with_margin(self):
+        t = geo.swap_template(256)
+        assert t.min() > 256 * 0.35 - 1 and t.max() < 256 * 0.75
+        assert np.allclose(geo.swap_template(128), t / 2)
+
+    def test_swap_mask_without_a_model_mask_is_the_ellipse(self):
+        m = geo.swap_mask(256, 0.5)
+        assert m.shape == (256, 256) and m[128, 128] == pytest.approx(1.0, abs=1e-3)
+        assert (
+            m[0].max() < 0.05
+            and m[-1].max() < 0.05
+            and m[:, 0].max() < 0.05
+            and m[:, -1].max() < 0.05
+        )
+
+    def test_swap_mask_never_reaches_the_border_even_if_the_model_mask_does(self):
+        # The generator's own mask can be 1 right up to the crop edge, which left a line across the forehead.
+        full = np.ones((256, 256), np.float32)
+        m = geo.swap_mask(256, 0.5, full)
+        assert m[0].max() < 0.05 and m[-1].max() < 0.05 and m[:, 0].max() < 0.05
+        assert m[128, 128] > 0.95
+
+    def test_swap_mask_follows_the_model_mask(self):
+        mm = np.zeros((256, 256), np.float32)
+        mm[:, :128] = 1.0  # the model says: only the left half
+        m = geo.swap_mask(256, 0.0, mm)
+        assert m[128, 60] > 0.9 and m[128, 200] < 0.05
+
+    def test_head_template_is_wider_than_the_swap_crop(self):
+        head = geo.head_template(640)
+        eye_dist = np.linalg.norm(head[1] - head[0])
+        assert (
+            eye_dist / 640
+            < np.linalg.norm(geo.swap_template(640)[1] - geo.swap_template(640)[0]) / 640
+        )
+        assert head.min() > 0 and head.max() < 640
+
+    def test_border_fade(self):
+        f = geo.border_fade(100, 0.1)
+        assert f[0, 50] == 0 and f[50, 0] == 0 and f[50, 50] == 1.0 and 0 < f[5, 50] < 1
+
+    def test_label_mask_and_hair_labels(self):
+        labels = np.array([[0, 17, 1], [17, 18, 4]], np.uint8)
+        assert geo.label_mask(labels, geo.HAIR_LABELS).tolist() == [
+            [0, 1, 0],
+            [1, 0, 0],
+        ]  # hats are not hair
+        assert geo.label_mask(labels, geo.FACE_LABELS).tolist() == [[0, 0, 1], [0, 0, 1]]
+
+    def test_clean_hair_mask_drops_skin_coloured_and_tiny_pieces(self):
+        img = np.zeros((100, 100, 3), np.uint8)
+        img[:, :] = (30, 30, 30)  # dark hair everywhere...
+        img[60:90, 60:90] = (120, 150, 210)  # ...except a skin-coloured patch
+        skin = np.zeros((100, 100), np.uint8)
+        skin[10:20, 10:20] = 1
+        img[10:20, 10:20] = (120, 150, 210)
+        hair = np.zeros((100, 100), np.uint8)
+        hair[30:70, 20:50] = 1  # real hair
+        hair[60:90, 60:90] = 1  # mislabelled skin patch
+        hair[2, 2] = 1  # speck
+        out = geo.clean_hair_mask(img, hair, skin)
+        assert out[40, 30] == 1 and out[75, 75] == 0 and out[2, 2] == 0
+
+    def test_warp_mask_to_image_round_trips_a_crop(self):
+        kps = _kps(150, 140, scale=1.5)
+        _, m = geo.align_crop(np.zeros((300, 300, 3), np.uint8), kps, geo.swap_template(256), 256)
+        out = geo.warp_mask_to_image(np.ones((256, 256), np.float32), m, (300, 300, 3))
+        assert out[140, 150] == 1.0 and out[0, 0] == 0.0
+
+
 class TestColourMatch:
     def _pair(self):
         rng = np.random.default_rng(1)
@@ -198,10 +269,31 @@ class TestEngineErrors:
 
     def test_status_lists_missing_files(self, tmp_path):
         s = face_models_status(tmp_path)
-        assert not s["ready"] and not s["restorer"] and len(s["missing"]) == 3
+        assert not s["ready"] and not s["restorer"] and not s["hair"] and s["swapper"] is None
+        assert len(s["missing"]) == 3  # detector, embedder, a swapper
         for info in face_models.FACE_MODELS.values():
             (tmp_path / info.filename).write_bytes(b"x")
-        assert face_models_status(tmp_path) == {"ready": True, "restorer": True, "missing": []}
+        assert face_models_status(tmp_path) == {
+            "ready": True,
+            "swapper": "hyperswap",
+            "restorer": True,
+            "hair": True,
+            "missing": [],
+        }
+
+    def test_the_older_swapper_is_a_fallback(self, tmp_path):
+        for key in ("detector", "embedder", "swapper_legacy"):
+            (tmp_path / face_models.FACE_MODELS[key].filename).write_bytes(b"x")
+        s = face_models_status(tmp_path)
+        assert s["ready"] and s["swapper"] == "inswapper" and not s["hair"]
+
+    def test_hair_without_the_parser_fails_clearly(self, monkeypatch, tmp_path):
+        from app.exceptions import ModelNotFoundError
+
+        e = self._engine(monkeypatch, [self._face()], [self._face()])
+        e.model_dir = tmp_path
+        with pytest.raises(ModelNotFoundError, match="bisenet"):
+            e.swap(np.zeros((50, 50, 3), np.uint8), np.zeros((60, 60, 3), np.uint8), hair=True)
 
 
 class _StubEngine:
@@ -271,7 +363,13 @@ class TestApi:
 
     def test_faces_status_endpoint(self, test_client: TestClient):
         r = test_client.get("/api/v1/faces/status")
-        assert r.status_code == 200 and set(r.json()) == {"ready", "restorer", "missing"}
+        assert r.status_code == 200 and set(r.json()) == {
+            "ready",
+            "swapper",
+            "restorer",
+            "hair",
+            "missing",
+        }
 
     def test_process_swaps_the_face(self, test_client: TestClient):
         r = self._post(
@@ -285,8 +383,19 @@ class TestApi:
             or out[2, 2].tolist() == [10, 20, 30]
         )
         assert self.engine.calls == [
-            {"target_index": 0, "donor_index": 0, "blend": 0.2, "color_match": 0.1, "restore": 0.4}
+            {
+                "target_index": 0,
+                "donor_index": 0,
+                "blend": 0.2,
+                "color_match": 0.1,
+                "restore": 0.4,
+                "hair": False,
+            }
         ]
+
+    def test_hair_flag_reaches_the_engine(self, test_client: TestClient):
+        assert self._post(test_client, {"hair": True}).status_code == 200
+        assert self.engine.calls[-1]["hair"] is True
 
     def test_disabled_face_does_not_touch_the_engine(self, test_client: TestClient):
         img = np.full((80, 100, 3), 5, np.uint8)

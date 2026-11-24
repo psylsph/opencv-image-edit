@@ -18,7 +18,7 @@ Mobile-first AI image editor — background blur/removal, film grain, 4× AI ups
 
 ### 🎨 Editing
 - **Background** — blur, remove, or **replace with a colour or another photo** (zoom, position, soften edge, edge in/out), using U2NetP / BiRefNet matting (ONNX). Adjustable blur strength (1–50).
-- **Face swap**: put a face from another photo onto someone in your photo (YuNet + ArcFace + InSwapper + GFPGAN, server-side; models are a ~1.1 GB optional download, see AGENTS.md).
+- **Face swap**: put a face (and optionally the hair) from another photo onto someone in your photo (YuNet + ArcFace + HyperSwap + GFPGAN + BiSeNet, server-side; models are a ~1 GB optional download, see AGENTS.md).
 - **Live preview on the phone** — grain, colour filters, sharpness, vignette, sepia and background blur/replace redraw instantly in the browser (WebGL2); the server does the AI steps and the final render.
 - **Film grain** — luminance-aware, Rec.601-weighted noise that preserves subject detail.
 - **AI upscale** — 2× / 4× via OpenCV DNN `cv2.dnn_superres.EDSR` with LANCZOS4 fallback.

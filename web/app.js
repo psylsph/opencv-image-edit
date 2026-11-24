@@ -57,7 +57,7 @@ const DEFAULT_SETTINGS = {
     enabled: false, mode: "blur", blur_strength: 15, model_name: "u2netp",
     color: "#00b140", zoom: 1, offset_x: 0, offset_y: 0, feather: 0, shrink: 0, defringe: 0,
   },
-  face: { enabled: false, target: 0, donor: 0, blend: 0.5, color_match: 0.5, restore: 0.8 },
+  face: { enabled: false, target: 0, donor: 0, blend: 0.5, color_match: 0.3, restore: 0.3, hair: false },
   grain: { enabled: false, intensity: 0.4 },
   upscale: { enabled: false, scale: 2, algorithm: "interp" },
   filters: {
@@ -666,6 +666,7 @@ function collectSettings() {
       blend: parseFloat($("#face-blend").value),
       color_match: parseFloat($("#face-color").value),
       restore: parseFloat($("#face-restore").value),
+      hair: $("#face-hair").checked,
     },
     background: {
       enabled: $("#bg-enabled").checked,
@@ -729,6 +730,7 @@ function applyPreset(name) {
   // Face swap (presets from older servers have no `face` block)
   const fd = { ...DEFAULT_SETTINGS.face, ...s.face };
   $("#face-enabled").checked = fd.enabled;
+  $("#face-hair").checked = !!fd.hair;
   for (const [id, key] of [["face-blend", "blend"], ["face-color", "color_match"], ["face-restore", "restore"]]) {
     setSlider($(`#${id}`), fd[key], $(`#${id}-value`), (v) => parseFloat(v).toFixed(2));
   }
@@ -1306,7 +1308,7 @@ async function processImage() {
       return;
     }
     formData.append("face_donor", faceUi.donorFile, faceUi.donorFile.name || "face");
-    setStatus("Swapping the face… this can take 10 s or more.");
+    setStatus(settings.face.hair ? "Swapping the face and hair… this can take 20 s or more." : "Swapping the face… this can take 10 s or more.");
   }
 
   if (isBackgroundPaintActive()) {
@@ -1692,6 +1694,7 @@ function renderFaceUi() {
     setFaceNote("");
   }
   $("#face-restore-row").hidden = !!(models && models.ready && !models.restorer);
+  $("#face-hair-row").hidden = !!(models && models.ready && !models.hair);
 
   const nPhoto = faceUi.photo?.data.faces.length;
   const nDonor = faceUi.donor?.data.faces.length;

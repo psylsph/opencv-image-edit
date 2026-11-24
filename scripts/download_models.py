@@ -148,17 +148,23 @@ MODELS: dict[str, dict] = {
         "sha256": "f1f79dc3b0b79a69f94799af1fffebff09fbd78fd96a275fd8f0cbbea23270d1",
         "size_mb": 166.3,
     },
-    "inswapper_128.onnx": {
-        # InsightFace inswapper_128 (non-commercial research licence) for face swap
-        "url": "https://huggingface.co/facefusion/models-3.0.0/resolve/main/inswapper_128.onnx",
-        "sha256": "a290273ed497312095dac48cdef20feec9d5208298223dd01288ab202b54bea7",
-        "size_mb": 529.6,
-    },
     "gfpgan_1.4.onnx": {
         # GFPGAN 1.4 face restorer (sharpens swapped faces)
         "url": "https://huggingface.co/facefusion/models-3.0.0/resolve/main/gfpgan_1.4.onnx",
         "sha256": "accc4757b26bdb89b32b4d3500d4f79c9dff97c1dd7c7104bf9dcb95e3311385",
         "size_mb": 324.5,
+    },
+    "hyperswap_1c_256.onnx": {
+        # HyperSwap 1c 256 px face swapper (FaceFusion). Check its licence before redistributing.
+        "url": "https://huggingface.co/facefusion/models-3.3.0/resolve/main/hyperswap_1c_256.onnx",
+        "sha256": "5528c2d76fe9986c99d829278987ef9f3a630cb606db7628d02b57b330f406a5",
+        "size_mb": 384.1,
+    },
+    "bisenet_resnet_34.onnx": {
+        # BiSeNet ResNet34 face parser (hair / skin / features) for hair transplant
+        "url": "https://huggingface.co/facefusion/models-3.0.0/resolve/main/bisenet_resnet_34.onnx",
+        "sha256": "4a0b8c958a3c938913bd06a8365dbb3c8761afba6ecbf0d14b3b1f77eb230c96",
+        "size_mb": 89.3,
     },
 }
 

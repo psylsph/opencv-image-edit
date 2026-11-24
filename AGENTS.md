@@ -36,10 +36,12 @@ Guidance for AI coding agents (and humans) working in this repo.
 
 ## Face swap models
 
-- Face swap needs four ONNX files (YuNet, ArcFace, `inswapper_128`, GFPGAN; see `scripts/download_models.py`). The
+- Face swap needs YuNet, ArcFace and HyperSwap 1c (GFPGAN and BiSeNet are optional extras: sharpening and hair; see
+  `scripts/download_models.py`). Judge engine changes with the identity measurement (ArcFace cosine of the result vs the
+  donor) *and* by eye on real photos; the metric caught that the alignment layout mattered more than the model. The
   `model-cache` volume hides what the image build downloaded, so on an existing install copy new models into it:
   `docker cp <file> opencv-image-edit:/home/app/models/`. `GET /api/v1/faces/status` lists what's missing.
 - `app/pipeline/face.py` is pure geometry and is tested without models; `app/models/face.py` is the neural part.
   Tests stub the engine, so no real faces are committed. Try changes on real photos before shipping (the mask edge once
   left a visible line at the chin).
-- `inswapper_128` weights are non-commercial research only: keep this a private tool.
+- Face-swap weights (InSwapper, HyperSwap, ...) are non-commercial: keep this a private tool.

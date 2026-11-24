@@ -97,6 +97,7 @@ def process_pipeline(
                 blend=f.blend,
                 color_match=f.color_match,
                 restore=f.restore,
+                hair=f.hair,
             )
 
         # 2. Background
