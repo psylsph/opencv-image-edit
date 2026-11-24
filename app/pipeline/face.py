@@ -175,7 +175,10 @@ FACE_LABELS = (
 
 
 def donor_face_mask(
-    size: int, feather: float = 0.6, labels: np.ndarray | None = None
+    size: int,
+    feather: float = 0.6,
+    labels: np.ndarray | None = None,
+    crop: np.ndarray | None = None,
 ) -> np.ndarray:
     """Where the donor's own face pixels are pre-pasted into the target crop (before the generator cleans it up).
 
@@ -188,6 +191,15 @@ def donor_face_mask(
     else:
         lab = cv2.resize(labels, (size, size), interpolation=cv2.INTER_NEAREST)
         parts = np.isin(lab, (1, 2, 3, 4, 5, 6, 10, 11, 12, 13)).astype(np.uint8)
+        if crop is not None:
+            # A thin strand of hair across the cheek is often labelled "skin". Skin that is far darker than the rest
+            # of the donor's skin is hair, a shadow or a stain: leave it out rather than paste it as a scar.
+            luma = cv2.cvtColor(cv2.resize(crop, (size, size)), cv2.COLOR_BGR2LAB)[:, :, 0].astype(
+                np.float32
+            )
+            skin = lab == 1
+            if skin.sum() > 100:
+                parts[skin & (luma < np.median(luma[skin]) - 26.0)] = 0
         parts = cv2.morphologyEx(parts, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
         base = parts.astype(np.float32) * ell
     sigma = float(np.clip(feather, 0.0, 1.0)) * 0.03 * size
@@ -204,6 +216,181 @@ def prepaste(
     return np.clip(
         crop.astype(np.float32) * (1.0 - a) + donor_crop.astype(np.float32) * a + 0.5, 0, 255
     ).astype(np.uint8)
+
+
+# Parts of the picture inside the face crop that are the face (or continue it): skin, brows, eyes, ears, nose, mouth,
+# lips, neck. Anything else there (hair, hat, glasses, clothing, a hand, background) is in front of / beside the face.
+VISIBLE_FACE_LABELS = (1, 2, 3, 4, 5, 7, 8, 10, 11, 12, 13, 14)
+
+
+def visible_face_mask(labels: np.ndarray, size: int, feather: float = 2.0) -> np.ndarray:
+    """Float mask on a ``size`` px crop: 1 where the face is visible, 0 where something covers it (hair, glasses, hand)."""
+    lab = cv2.resize(labels, (size, size), interpolation=cv2.INTER_NEAREST)
+    vis = np.isin(lab, VISIBLE_FACE_LABELS).astype(np.uint8)
+    vis = cv2.morphologyEx(
+        vis, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8)
+    )  # parser speckle inside the face
+    out = vis.astype(np.float32)
+    return cv2.GaussianBlur(out, (0, 0), feather) if feather > 0 else out
+
+
+def skin_color_transfer(
+    patch: np.ndarray, crop: np.ndarray, skin: np.ndarray, strength: float
+) -> np.ndarray:
+    """Make the swapped face's *skin* match the person's own skin (LAB mean and spread over skin pixels only).
+
+    ``patch`` is the generator's output, ``crop`` the original target face in the same alignment and ``skin`` a 0/1
+    mask of skin pixels (no eyes, brows, lips, hair). Matching skin to skin keeps the eyes and mouth honest, and
+    stops a pale face on a dark neck. ``strength`` 0..1.
+    """
+    strength = float(np.clip(strength, 0.0, 1.0))
+    m = skin > 0
+    if strength <= 0 or m.sum() < 64:
+        return patch
+    p = cv2.cvtColor(patch, cv2.COLOR_BGR2LAB).astype(np.float32)
+    t = cv2.cvtColor(crop, cv2.COLOR_BGR2LAB).astype(np.float32)
+    out = p.copy()
+    for c in range(3):
+        mp, sp = float(p[..., c][m].mean()), float(p[..., c][m].std()) + 1e-3
+        mt, st = float(t[..., c][m].mean()), float(t[..., c][m].std()) + 1e-3
+        gain = (
+            float(np.clip(st / sp, 0.8, 1.25)) if c == 0 else 1.0
+        )  # keep the face's own contrast, mostly
+        matched = (p[..., c] - mp) * gain + mt
+        out[..., c] = p[..., c] * (1.0 - strength) + matched * strength
+    return cv2.cvtColor(np.clip(out, 0, 255).astype(np.uint8), cv2.COLOR_LAB2BGR)
+
+
+def match_detail(
+    result: np.ndarray, original: np.ndarray, face: np.ndarray, amount: float = 1.0, seed: int = 0
+) -> np.ndarray:
+    """Give the pasted face the sharpness and grain of the photo it was pasted into.
+
+    ``face`` is a full-size float mask of the pasted face. The generator's output is smoother than a camera's, which
+    is the "airbrushed" look. Compare fine-detail energy (a high-pass of the brightness) inside the face in the
+    original and the result; then sharpen, and add matching grain for what sharpening cannot supply.
+    """
+    amount = float(np.clip(amount, 0.0, 1.5))
+    core = face > 0.6
+    if amount <= 0 or core.sum() < 200:
+        return result
+    ys, xs = np.nonzero(face > 0.02)
+    y0, y1, x0, x1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
+    res = result[y0:y1, x0:x1].astype(np.float32)
+    org = original[y0:y1, x0:x1].astype(np.float32)
+    f = face[y0:y1, x0:x1]
+    c = core[y0:y1, x0:x1]
+    sigma = max(1.0, 0.0035 * max(result.shape[:2]))
+    lum = lambda a: a @ np.array([0.114, 0.587, 0.299], np.float32)  # noqa: E731  (BGR luma)
+    hp = lambda a: lum(a) - cv2.GaussianBlur(lum(a), (0, 0), sigma)  # noqa: E731
+
+    def energy(a):
+        x = hp(a)[c]
+        return float(np.median(np.abs(x - np.median(x))) * 1.4826) + 1e-3
+
+    want, have = energy(org), energy(res)
+    if have >= want:
+        return result
+    # 1) sharpen toward the target's detail level (unsharp mask), capped so it never rings
+    blur = cv2.GaussianBlur(res, (0, 0), sigma * 1.3)
+    gain = float(np.clip((want / have - 1.0) * 0.6 * amount, 0.0, 1.6))
+    sharp = res + (res - blur) * gain
+    # 2) grain for the energy still missing
+    have2 = energy(sharp)
+    need = float(np.sqrt(max(want**2 - have2**2, 0.0))) * amount
+    if need > 0.2:
+        rng = np.random.default_rng(seed)
+        n = cv2.GaussianBlur(rng.standard_normal(res.shape[:2]).astype(np.float32), (0, 0), 0.6)
+        n /= max(float(n.std()), 1e-6)
+        sharp = sharp + (n * need)[:, :, None]
+    out = result.copy()
+    mixed = res * (1.0 - f[:, :, None]) + sharp * f[:, :, None]
+    out[y0:y1, x0:x1] = np.clip(mixed + 0.5, 0, 255).astype(np.uint8)
+    return out
+
+
+def landmarks_to_5(lm68: np.ndarray) -> np.ndarray:
+    """The five points the aligners use (eye centres, nose tip, mouth corners) from 68 face landmarks."""
+    lm = np.asarray(lm68, np.float32)
+    return np.stack([lm[36:42].mean(0), lm[42:48].mean(0), lm[30], lm[48], lm[54]]).astype(
+        np.float32
+    )
+
+
+def yaw_estimate(kps: np.ndarray) -> float:
+    """Rough head turn from the 5 points: how far the nose tip sits from the midpoint of the eyes, in eye-distances.
+
+    About 0 for a frontal face, +/-0.2..0.5 for a three-quarter view (sign says which way)."""
+    k = np.asarray(kps, np.float32)
+    eye_dist = float(np.linalg.norm(k[1] - k[0])) + 1e-6
+    mid = (k[0] + k[1]) / 2.0
+    across = (k[1] - k[0]) / eye_dist
+    return float(np.dot(k[2] - mid, across) / eye_dist)
+
+
+def shape_for_poses(shape: float, target_kps: np.ndarray, donor_kps: np.ndarray) -> float:
+    """Take less of the donor's face *shape* when the two heads are turned differently: a face turned 30 degrees pasted
+    onto a frontal one comes out distorted. Same pose: unchanged. Very different: about a third of the asked amount."""
+    d = abs(yaw_estimate(target_kps) - yaw_estimate(donor_kps))
+    return float(np.clip(shape, 0.0, 1.0) * np.clip(1.25 - 2.5 * d, 0.35, 1.0))
+
+
+def piecewise_affine(
+    img: np.ndarray, src_pts: np.ndarray, dst_pts: np.ndarray, size: int
+) -> np.ndarray:
+    """Warp ``img`` (a ``size`` px square) so each ``src_pts`` point lands on its ``dst_pts`` point, triangle by triangle.
+
+    Points on the crop's border map to themselves, so the warp stays inside the crop. Each Delaunay triangle gets its
+    own affine map, which moves the eyes, nose and mouth independently (a similarity transform can only turn and
+    scale the whole face).
+    """
+    hi = size - 1.0
+    anchors = np.array(
+        [[0, 0], [hi / 2, 0], [hi, 0], [0, hi / 2], [hi, hi / 2], [0, hi], [hi / 2, hi], [hi, hi]],
+        np.float32,
+    )
+    src = np.vstack([np.asarray(src_pts, np.float32), anchors])
+    dst = np.vstack([np.asarray(dst_pts, np.float32), anchors])
+    rect = (0, 0, size, size)
+    sub = cv2.Subdiv2D(rect)
+    index = {}
+    for i, (x, y) in enumerate(dst):
+        key = (round(float(x), 3), round(float(y), 3))
+        if key in index:  # two points on top of each other: keep the first
+            continue
+        index[key] = i
+        sub.insert((float(np.clip(x, 0, hi)), float(np.clip(y, 0, hi))))
+    out = np.zeros_like(img)
+    filled = np.zeros((size, size), np.uint8)
+    lookup = {
+        (round(float(np.clip(x, 0, hi)), 3), round(float(np.clip(y, 0, hi)), 3)): i
+        for i, (x, y) in enumerate(dst)
+    }
+    for t in sub.getTriangleList():
+        pts = t.reshape(3, 2)
+        ids = [lookup.get((round(float(x), 3), round(float(y), 3))) for x, y in pts]
+        if any(i is None for i in ids):
+            continue
+        d = dst[ids].astype(np.float32)
+        sr = src[ids].astype(np.float32)
+        x, y, w, h = cv2.boundingRect(d)
+        x0, y0 = max(x, 0), max(y, 0)
+        x1, y1 = min(x + w + 1, size), min(y + h + 1, size)
+        if x1 <= x0 or y1 <= y0:
+            continue
+        m = cv2.getAffineTransform(sr, d - np.array([x0, y0], np.float32))
+        warped = cv2.warpAffine(
+            img, m, (x1 - x0, y1 - y0), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101
+        )
+        tri_mask = np.zeros((y1 - y0, x1 - x0), np.uint8)
+        cv2.fillConvexPoly(
+            tri_mask, np.round(d - np.array([x0, y0], np.float32)).astype(np.int32), 1
+        )
+        region = out[y0:y1, x0:x1]
+        region[tri_mask > 0] = warped[tri_mask > 0]
+        filled[y0:y1, x0:x1][tri_mask > 0] = 1
+    out[filled == 0] = img[filled == 0]
+    return out
 
 
 def label_mask(labels: np.ndarray, which) -> np.ndarray:

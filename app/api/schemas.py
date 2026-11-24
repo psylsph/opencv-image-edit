@@ -34,10 +34,13 @@ class FaceRequest(BaseModel):
     )  # which face in the donor photo, counted left to right
     blend: float = Field(default=0.5, ge=0, le=1)  # edge softness
     color_match: float = Field(
-        default=0.3, ge=0, le=1
+        default=0.8, ge=0, le=1
     )  # pull the new face's colour toward the photo's
     restore: float = Field(default=0.3, ge=0, le=1)  # face restorer strength (0 = off)
     hair: bool = False  # also bring the donor's hair (needs the face-parsing model)
+    detail: float = Field(
+        default=0.8, ge=0, le=1.5
+    )  # give the new face the photo's sharpness and grain
     shape: float = Field(default=0.8, ge=0, le=1)  # 0 keep their face shape, 1 take the donor's
 
 

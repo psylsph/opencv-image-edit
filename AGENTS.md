@@ -36,7 +36,7 @@ Guidance for AI coding agents (and humans) working in this repo.
 
 ## Face swap models
 
-- Face swap needs YuNet, ArcFace and HyperSwap 1c (GFPGAN and BiSeNet are optional extras: sharpening and hair; see
+- Face swap needs YuNet, ArcFace and HyperSwap 1c (GFPGAN, BiSeNet and 2DFAN4 are optional extras: sharpening, hair/skin/occlusion masks, precise landmarks; without them it still works, less well; see
   `scripts/download_models.py`). Judge engine changes with the identity measurement (ArcFace cosine of the result vs the
   donor) *and* by eye on real photos; the metric caught that the alignment layout mattered more than the model. The
   `model-cache` volume hides what the image build downloaded, so on an existing install copy new models into it:

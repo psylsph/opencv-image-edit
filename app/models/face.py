@@ -49,6 +49,7 @@ FACE_MODELS: dict[str, FaceModelInfo] = {
     ),
     "restorer": FaceModelInfo("gfpgan_1.4.onnx", "GFPGAN 1.4 face restorer", 325.0, False),
     "parser": FaceModelInfo("bisenet_resnet_34.onnx", "BiSeNet face parser (hair)", 89.0, False),
+    "landmarker": FaceModelInfo("2dfan4.onnx", "2DFAN4 68-point face landmarks", 93.0, False),
 }
 
 
@@ -56,6 +57,7 @@ class Face(NamedTuple):
     box: tuple[float, float, float, float]  # x, y, w, h in image pixels
     kps: np.ndarray  # (5, 2) float32, image pixels
     score: float
+    lm68: np.ndarray | None = None  # (68, 2) float32 when the landmark model refined this face
 
 
 def face_models_status(model_dir: Path | str | None = None) -> dict:
@@ -79,6 +81,7 @@ def face_models_status(model_dir: Path | str | None = None) -> dict:
         "swapper": swapper,
         "restorer": has["restorer"],
         "hair": has["parser"],
+        "landmarks": has["landmarker"],
         "missing": missing,
     }
 
@@ -104,6 +107,7 @@ class FaceEngine:
         self._restorer: ort.InferenceSession | None = None
         self._restorer_checked = False
         self._parser: ort.InferenceSession | None = None
+        self._landmarker: ort.InferenceSession | None = None
 
     def _path(self, key: str) -> Path:
         path = self.model_dir / FACE_MODELS[key].filename
@@ -140,6 +144,31 @@ class FaceEngine:
             faces.append(Face(box, kps, float(r[14])))
         faces.sort(key=lambda f: f.box[0] + f.box[2] / 2)
         return faces
+
+    def refine(self, img_bgr: np.ndarray, face: Face) -> Face:
+        """Replace the detector's 5 rough points with ones derived from 68 landmarks (much better on turned heads).
+
+        Without the landmark model, returns ``face`` unchanged.
+        """
+        path = self.model_dir / FACE_MODELS["landmarker"].filename
+        if not path.exists():
+            return face
+        if self._landmarker is None:
+            self._landmarker = _session(path)
+        x, y, w, h = face.box
+        scale = 195.0 / max(w, h, 1.0)
+        tx, ty = (256.0 - (2 * x + w) * scale) * 0.5, (256.0 - (2 * y + h) * scale) * 0.5
+        m = np.array([[scale, 0, tx], [0, scale, ty]], np.float32)
+        crop = cv2.warpAffine(img_bgr, m, (256, 256))
+        out = self._landmarker.run(
+            None, {"input": (crop.astype(np.float32) / 255.0).transpose(2, 0, 1)[None]}
+        )[0][0]
+        pts = out[:, :2] / 64.0 * 256.0
+        inv = cv2.invertAffineTransform(m)
+        lm = (pts @ inv[:, :2].T + inv[:, 2]).astype(np.float32)
+        if not np.isfinite(lm).all():
+            return face
+        return face._replace(kps=geo.landmarks_to_5(lm), lm68=lm)
 
     # -- identity ----------------------------------------------------------------------------------------------
 
@@ -282,10 +311,11 @@ class FaceEngine:
         target_index: int = 0,
         donor_index: int = 0,
         blend: float = 0.5,
-        color_match: float = 0.3,
+        color_match: float = 0.8,
         restore: float = 0.3,
         hair: bool = False,
         shape: float = 0.8,
+        detail: float = 0.8,
     ) -> np.ndarray:
         """Put the donor's face (and with ``hair`` their hair) on one face of ``target_bgr``; same size back.
 
@@ -312,25 +342,49 @@ class FaceEngine:
         if hair:
             self._path("parser")  # fail early with a clear message if hair swapping isn't installed
 
-        target, donor = target_faces[target_index], donor_faces[donor_index]
+        target = self.refine(target_bgr, target_faces[target_index])
+        donor = self.refine(donor_bgr, donor_faces[donor_index])
         self._load_swapper()
         emb = self._embedding(donor_bgr, donor)
 
         size = 256 if self._swapper_kind == "hyperswap" else 128
         crop, m = geo.align_crop(target_bgr, target.kps, geo.swap_template(size), size)
+        shape = geo.shape_for_poses(shape, target.kps, donor.kps)
         src = crop
         if shape > 0:
-            dcrop, _ = geo.align_crop(donor_bgr, donor.kps, geo.swap_template(size), size)
+            dcrop, md = geo.align_crop(donor_bgr, donor.kps, geo.swap_template(size), size)
+            if donor.lm68 is not None and target.lm68 is not None:
+                # Move the donor's eyes, brows, nose and mouth onto where the target's are (orientation and position),
+                # and let the jaw outline follow the donor by `shape`.
+                dl = donor.lm68 @ md[:, :2].T + md[:, 2]
+                tl = target.lm68 @ m[:, :2].T + m[:, 2]
+                dst = tl.copy()
+                dst[:17] = tl[:17] * (1.0 - shape) + dl[:17] * shape
+                dcrop = geo.piecewise_affine(dcrop, dl, dst, size)
             labels = None
             if (self.model_dir / FACE_MODELS["parser"].filename).exists():
                 labels = self.parse(cv2.resize(dcrop, (512, 512), interpolation=cv2.INTER_CUBIC))
-            dmask = geo.donor_face_mask(size, 0.6, labels)
+            dmask = geo.donor_face_mask(size, 0.6, labels, dcrop)
             dcrop = geo.match_color(dcrop, crop, (dmask > 0.5).astype(np.float32), 1.0)
             src = geo.prepaste(crop, dcrop, dmask, shape)
         patch, model_mask = self._render(src, emb)
         mask = geo.swap_mask(size, blend, model_mask)
-        patch = geo.match_color(patch, crop, (mask > 0.5).astype(np.float32), color_match)
+
+        have_parser = (self.model_dir / FACE_MODELS["parser"].filename).exists()
+        if have_parser:
+            # What is the target's skin, and where is the face actually visible (not behind hair, glasses, a hand)?
+            tlabels = self.parse(cv2.resize(crop, (512, 512), interpolation=cv2.INTER_CUBIC))
+            skin = cv2.resize(
+                (tlabels == 1).astype(np.uint8), (size, size), interpolation=cv2.INTER_NEAREST
+            )
+            mask = mask * geo.visible_face_mask(tlabels, size)
+            patch = geo.skin_color_transfer(patch, crop, skin, color_match)
+        else:
+            patch = geo.match_color(patch, crop, (mask > 0.5).astype(np.float32), color_match * 0.4)
         result = geo.paste_back(target_bgr, patch, m, mask)
+        result = geo.match_detail(
+            result, target_bgr, geo.warp_mask_to_image(mask, m, target_bgr.shape), detail
+        )
 
         restorer = self._restore_session() if restore > 0 else None
         if restorer is not None:

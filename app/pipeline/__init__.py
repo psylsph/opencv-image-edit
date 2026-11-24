@@ -99,6 +99,7 @@ def process_pipeline(
                 restore=f.restore,
                 hair=f.hair,
                 shape=f.shape,
+                detail=f.detail,
             )
 
         # 2. Background

@@ -196,6 +196,16 @@ How it works (server, `app/models/face.py` + `app/pipeline/face.py`):
    crop by the slider; the generator then harmonises it. 0 = the old behaviour, 1 = the donor's face shape and
    expression. Measured donor similarity 0.756 (0) -> 0.809 (0.8). Tried and dropped: cross-fading raw donor pixels
    after the swap (ghosting), pushing the identity vector away from the target (lower match), extra passes (tiny gain).
+3c. **Placement and realism** (1.19.0): the detector's 5 points are rough on turned heads, so a 68-point landmark model
+   (2DFAN4) refines them (eye centres, nose tip, mouth corners) before anything is aligned. With the donor pre-paste,
+   a piecewise-affine warp (Delaunay triangles over the 68 points) moves the donor's eyes, brows, nose and mouth onto
+   the target's, and lets the jaw outline follow the donor by the shape slider. Then: skin-to-skin LAB colour transfer
+   using the parser's skin pixels (stops a pale face on a dark neck; default 0.8), a visible-face mask from the parser
+   so hair, glasses and hands in front of the face stay on top, and texture matching (sharpen + grain to the photo's
+   own fine-detail level, default 0.8) so the face is not airbrushed.
+3d. **Pose-aware**: the donor-shape strength is reduced automatically when the two heads are turned differently (yaw
+   from the 5 points), because a three-quarter face pasted onto a frontal one distorts; skin darker than the donor's
+   own skin (hair strands, hat shadow) is kept out of the pre-paste.
 4. **Sharpen** (optional, default 0.3): GFPGAN 1.4 on a 512 px FFHQ-aligned crop, blended back.
 5. **Hair** (optional): BiSeNet face parsing finds hair on both people in a wide head crop. The target's hair is erased
    by LaMa inpainting (not the face), the donor's hair is pasted over, scaled/rotated to the target's head by the same
@@ -216,7 +226,7 @@ UI: **Face swap** group with donor picker, numbered tappable rings on the photo,
 "Also take their hair", and sliders for edge softness, skin-tone match and sharpening. About 5 s on this CPU for the
 face, 7-15 s with hair.
 
-Models (~1 GB, `scripts/download_models.py`): YuNet, ArcFace, HyperSwap 1c, GFPGAN 1.4, BiSeNet (hair); LaMa (already
+Models (~1.1 GB, `scripts/download_models.py`): YuNet, ArcFace, HyperSwap 1c, GFPGAN 1.4, BiSeNet (hair/skin/occlusion), 2DFAN4 (landmarks); LaMa (already
 there for Remove Object) erases the old hair. **They land in the image
 build, but the `model-cache` volume hides them on an existing install**; copy them in with
 `docker cp <file> opencv-image-edit:/home/app/models/` (or run `scripts/download_models.py /home/app/models` inside
@@ -226,6 +236,10 @@ Next:
 
 - [ ] Hair limits to improve: hats on the target or donor, long hair over busy backgrounds (inpaint smears), donors whose
       shoulders the parser calls hair. A cleaner hair matte (matting instead of parsing) and colour-matching the donor's hair.
+- [ ] Donors with hair across the face (or a hat shadow) can still bring a dark streak: the generators copy whatever is
+      on the donor's face into the result. Tried cleaning the donor crop by inpainting before embedding it; it distorted the
+      identity and made things worse, so it was reverted. Better: choose a clean donor frame, or a face-parsing-aware
+      inpainting that keeps the identity features.
 - [ ] Live local composite: the server returns just the swapped face patch + mask + placement and `gl.js` composites it,
       so edge softness / skin-tone sliders become live.
 - [ ] Several faces at once ("swap all", one donor per face).

@@ -169,6 +169,15 @@ class TestFaceShape:
         assert m[128, 128] > 0.95  # skin
         assert m[60, 128] < 0.05  # the hair rows are left out (they would paste stray strands)
 
+    def test_a_dark_hair_strand_labelled_as_skin_is_left_out(self):
+        labels = np.zeros((512, 512), np.uint8)
+        labels[100:400, 100:400] = 1  # all "skin" according to the parser
+        crop = np.full((256, 256, 3), (120, 150, 205), np.uint8)
+        crop[60:200, 150:156] = (25, 25, 30)  # a dark strand down the cheek
+        m = geo.donor_face_mask(256, 0.0, labels, crop)
+        assert m[128, 128] > 0.9  # ordinary skin kept
+        assert m[120, 152] < 0.1  # the strand is not pasted
+
     def test_prepaste_mixes_by_shape(self):
         crop = np.full((64, 64, 3), 100, np.uint8)
         donor = np.full((64, 64, 3), 200, np.uint8)
@@ -180,6 +189,158 @@ class TestFaceShape:
         assert np.array_equal(
             geo.prepaste(crop, donor, zero, 1.0), crop
         )  # outside the mask: unchanged
+
+
+def _lm68(cx=100.0, cy=100.0, scale=1.0):
+    """A plausible 68-point face (outline, brows, nose, eyes, mouth) in the dlib layout."""
+    pts = np.zeros((68, 2), np.float32)
+    t = np.linspace(0, np.pi, 17)
+    pts[:17] = np.stack(
+        [cx - 40 * np.cos(t) * scale, cy + 10 * scale + 50 * np.sin(t) * scale], 1
+    )  # jaw
+    for i, x in enumerate(np.linspace(-35, -10, 5)):
+        pts[17 + i] = (cx + x * scale, cy - 28 * scale)  # right brow
+    for i, x in enumerate(np.linspace(10, 35, 5)):
+        pts[22 + i] = (cx + x * scale, cy - 28 * scale)  # left brow
+    for i in range(4):
+        pts[27 + i] = (cx, cy - 15 * scale + i * 8 * scale)  # nose bridge .. tip (30 is the tip)
+    for i in range(5):
+        pts[31 + i] = (cx + (i - 2) * 6 * scale, cy + 20 * scale)  # nostrils
+    for j, (ex, ey) in enumerate([(-22, -15), (22, -15)]):
+        for i in range(6):
+            a = 2 * np.pi * i / 6
+            pts[36 + 6 * j + i] = (
+                cx + (ex + 7 * np.cos(a)) * scale,
+                cy + (ey + 3 * np.sin(a)) * scale,
+            )
+    for i in range(12):
+        a = 2 * np.pi * i / 12
+        pts[48 + i] = (
+            cx - 18 * np.cos(a) * scale,
+            cy + 35 * scale + 6 * np.sin(a) * scale,
+        )  # outer mouth (48 = left corner)
+    for i in range(8):
+        a = 2 * np.pi * i / 8
+        pts[60 + i] = (cx + 11 * np.cos(a) * scale, cy + 35 * scale + 3 * np.sin(a) * scale)
+    return pts
+
+
+class TestLandmarks:
+    def test_five_points_from_68(self):
+        lm = _lm68()
+        five = geo.landmarks_to_5(lm)
+        assert five.shape == (5, 2)
+        assert np.allclose(five[0], lm[36:42].mean(0)) and np.allclose(five[1], lm[42:48].mean(0))
+        assert (
+            np.allclose(five[2], lm[30])
+            and np.allclose(five[3], lm[48])
+            and np.allclose(five[4], lm[54])
+        )
+        assert five[0][0] < five[1][0] and five[3][0] < five[4][0]  # image-left points first
+
+    def test_piecewise_identity_warp_is_the_identity(self):
+        rng = np.random.default_rng(0)
+        img = cv2.GaussianBlur(rng.integers(0, 255, (128, 128, 3), dtype=np.uint8), (0, 0), 2)
+        pts = _lm68(64, 64, 0.7)
+        out = geo.piecewise_affine(img, pts, pts.copy(), 128)
+        assert np.abs(out.astype(int) - img.astype(int)).mean() < 1.5
+
+    def test_piecewise_warp_moves_a_point_to_its_target(self):
+        img = np.zeros((128, 128, 3), np.uint8)
+        img[:, :, 0] = np.arange(128)[None, :]  # blue ramps with x
+        img[:, :, 1] = np.arange(128)[:, None]  # green ramps with y
+        src = _lm68(64, 64, 0.7)
+        dst = src.copy()
+        dst[30] += (10, 6)  # push the nose tip right and down
+        out = geo.piecewise_affine(img, src, dst, 128)
+        x, y = np.round(dst[30]).astype(int)
+        # at the new tip position the content that was at the old tip position appears
+        assert (
+            abs(int(out[y, x, 0]) - int(round(src[30][0]))) <= 3
+            and abs(int(out[y, x, 1]) - int(round(src[30][1]))) <= 3
+        )
+
+    def test_piecewise_warp_keeps_the_border_fixed(self):
+        img = np.random.default_rng(1).integers(0, 255, (96, 96, 3), dtype=np.uint8)
+        src = _lm68(48, 48, 0.5)
+        out = geo.piecewise_affine(img, src, src + 3.0, 96)
+        assert np.abs(out[0].astype(int) - img[0].astype(int)).mean() < 2
+
+    def test_refine_without_the_model_changes_nothing(self, tmp_path):
+        e = FaceEngine(tmp_path)
+        f = Face((10.0, 10.0, 50.0, 50.0), _kps(35, 35), 0.9)
+        assert e.refine(np.zeros((100, 100, 3), np.uint8), f) is f
+
+
+class TestPose:
+    def test_frontal_face_has_no_yaw_and_a_turned_one_does(self):
+        frontal = np.array([[40, 50], [80, 50], [60, 70], [45, 90], [75, 90]], np.float32)
+        turned = frontal.copy()
+        turned[2, 0] += 10  # nose slides toward one eye
+        assert abs(geo.yaw_estimate(frontal)) < 1e-4
+        assert geo.yaw_estimate(turned) > 0.2 and geo.yaw_estimate(
+            turned[:, ::-1][:, ::-1]
+        ) == pytest.approx(geo.yaw_estimate(turned))
+
+    def test_shape_is_unchanged_for_matching_poses_and_reduced_for_different_ones(self):
+        frontal = np.array([[40, 50], [80, 50], [60, 70], [45, 90], [75, 90]], np.float32)
+        turned = frontal.copy()
+        turned[2, 0] += 14
+        assert geo.shape_for_poses(0.8, frontal, frontal) == pytest.approx(0.8)
+        reduced = geo.shape_for_poses(0.8, frontal, turned)
+        assert 0.8 * 0.35 - 1e-6 <= reduced < 0.8 * 0.75
+        assert geo.shape_for_poses(0.0, frontal, turned) == 0.0
+
+
+class TestTextureAndTone:
+    def test_visible_face_mask_drops_hair_and_glasses(self):
+        labels = np.zeros((512, 512), np.uint8)
+        labels[100:400, 100:400] = 1  # skin
+        labels[100:160, 100:400] = 17  # a fringe of hair over the forehead
+        labels[240:270, 100:400] = 6  # a band of glasses
+        m = geo.visible_face_mask(labels, 128, 0.0)
+        assert m[90, 64] > 0.9  # open skin
+        assert m[30, 64] < 0.1  # under the hair
+        assert m[64, 64] < 0.1  # the glasses band (rows 240..270 of 512 -> 60..67 of 128)
+
+    def test_skin_colour_transfer_matches_skin_not_eyes(self):
+        crop = np.full((64, 64, 3), (90, 120, 170), np.uint8)  # dark warm skin
+        crop[20:26, 20:44] = (20, 20, 20)  # the eyes/brows: not skin
+        patch = np.full((64, 64, 3), (180, 200, 230), np.uint8)  # pale face
+        patch[20:26, 20:44] = (10, 10, 10)
+        skin = np.ones((64, 64), np.uint8)
+        skin[18:28, 18:46] = 0
+        out = geo.skin_color_transfer(patch, crop, skin, 1.0)
+        assert (
+            np.abs(out[50, 50].astype(int) - np.array([90, 120, 170])).max() < 12
+        )  # skin now the person's tone
+        assert out[22, 30].sum() < 150  # the eyes stayed dark
+        assert np.array_equal(geo.skin_color_transfer(patch, crop, skin, 0.0), patch)
+
+    def test_match_detail_adds_grain_to_a_smooth_face(self):
+        rng = np.random.default_rng(2)
+        original = np.clip(rng.normal(120, 8, (160, 160, 3)), 0, 255).astype(
+            np.uint8
+        )  # grainy photo
+        result = cv2.GaussianBlur(original, (0, 0), 3.0)  # the generator's smooth face
+        face = np.zeros((160, 160), np.float32)
+        face[30:130, 30:130] = 1.0
+
+        def grain(a):
+            g = a.mean(2) - cv2.GaussianBlur(a.mean(2), (0, 0), 1.2)
+            return float(g[50:110, 50:110].std())
+
+        out = geo.match_detail(result, original, face, 1.0)
+        assert grain(out) > 2.0 * grain(result)
+        assert np.array_equal(out[:20], result[:20])  # outside the face: untouched
+        assert np.array_equal(geo.match_detail(result, original, face, 0.0), result)
+
+    def test_match_detail_never_smooths_an_already_sharp_face(self):
+        rng = np.random.default_rng(3)
+        sharp = np.clip(rng.normal(120, 12, (120, 120, 3)), 0, 255).astype(np.uint8)
+        smooth_original = cv2.GaussianBlur(sharp, (0, 0), 2.0)
+        face = np.ones((120, 120), np.float32)
+        assert np.array_equal(geo.match_detail(sharp, smooth_original, face, 1.0), sharp)
 
 
 class TestColourMatch:
@@ -309,6 +470,7 @@ class TestEngineErrors:
             "swapper": "hyperswap",
             "restorer": True,
             "hair": True,
+            "landmarks": True,
             "missing": [],
         }
 
@@ -399,6 +561,7 @@ class TestApi:
             "swapper",
             "restorer",
             "hair",
+            "landmarks",
             "missing",
         }
 
@@ -422,6 +585,7 @@ class TestApi:
                 "restore": 0.4,
                 "hair": False,
                 "shape": 0.8,
+                "detail": 0.8,
             }
         ]
 

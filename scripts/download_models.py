@@ -166,6 +166,12 @@ MODELS: dict[str, dict] = {
         "sha256": "4a0b8c958a3c938913bd06a8365dbb3c8761afba6ecbf0d14b3b1f77eb230c96",
         "size_mb": 89.3,
     },
+    "2dfan4.onnx": {
+        # 2DFAN4 68-point face landmarks (FaceFusion): precise eyes/nose/mouth for face-swap alignment
+        "url": "https://huggingface.co/facefusion/models-3.0.0/resolve/main/2dfan4.onnx",
+        "sha256": "678c6fa539d52335a31c980feefdf4a6e02d781d83dce00af8a894f114557285",
+        "size_mb": 93.4,
+    },
 }
 
 
