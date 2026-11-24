@@ -361,6 +361,10 @@ function bindEvents() {
     ["#bg-feather", "#bg-feather-value", (v) => parseFloat(v).toFixed(2)],
     ["#bg-defringe", "#bg-defringe-value", (v) => parseFloat(v).toFixed(2)],
     ["#bg-shrink", "#bg-shrink-value", (v) => parseFloat(v).toFixed(2)],
+    ["#face-shape", "#face-shape-value", (v) => parseFloat(v).toFixed(2)],
+    ["#face-blend", "#face-blend-value", (v) => parseFloat(v).toFixed(2)],
+    ["#face-color", "#face-color-value", (v) => parseFloat(v).toFixed(2)],
+    ["#face-restore", "#face-restore-value", (v) => parseFloat(v).toFixed(2)],
   ];
   sliders.forEach(([slider, output, fmt]) => {
     const s = $(slider), o = $(output);
@@ -1508,7 +1512,14 @@ async function processTattoo() {
   state.lastResult = data;
   renderOutputs(data);
   const secs = (data.elapsed_seconds ?? 0).toFixed(1);
-  setStatus(`Tattoo removed in ${secs}s`, "success");
+  const msg = {
+    detected: `Tattoo removed (${data.ink_pct}% of the selection) in ${secs}s`,
+    relaxed: `Removed with a looser match (${data.ink_pct}% of the selection): the tattoo was hard to tell from skin. Raise “Catch faint ink” or select it more closely if it missed some.`,
+    selection: "Couldn't tell the tattoo from the skin, so the whole selection was repainted. Select just the tattoo (tap it) for a cleaner result.",
+    clean: "No tattoo colours found in that selection: it looks like plain skin, so nothing was changed.",
+    none: "Nothing to remove (the amount is 0).",
+  }[data.mode] || `Tattoo removed in ${secs}s`;
+  setStatus(msg, data.mode === "selection" || data.mode === "clean" ? "" : "success");
   state.processing = false;
   updateProcessButton();
 }

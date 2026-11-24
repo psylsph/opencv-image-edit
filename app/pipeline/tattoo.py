@@ -124,9 +124,22 @@ def skin_around(skin: np.ndarray, reach: int, need: int) -> np.ndarray:
 
 
 def find_ink(
-    img_bgr: np.ndarray, mask: np.ndarray, grow: float
+    img_bgr: np.ndarray, mask: np.ndarray, grow: float, level: int = 0
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Returns ``(ink, skin, lab)``: uint8 0/1 masks of the tattoo pixels and of the clean skin, plus the LAB image."""
+    """Returns ``(ink, skin, lab)``: uint8 0/1 masks of the tattoo pixels and of the clean skin, plus the LAB image.
+
+    ``level`` 0 is the careful detector; 1 is relaxed (looser skin test, fewer directions, any colour difference);
+    2 treats the whole selection as the tattoo (the caller asks for it when nothing was found).
+    """
+    if level >= 2:
+        binary2 = (mask > 0).astype(np.uint8)
+        return (
+            binary2,
+            np.zeros_like(binary2),
+            cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB).astype(np.float32),
+        )
+    if level == 1:
+        grow = 1.0
     grow = float(np.clip(grow, 0.0, 1.0))
     r = _radius(img_bgr.shape)
     k = np.ones((3, 3), np.uint8)
@@ -161,12 +174,15 @@ def find_ink(
         min(max(6 * r, REACH_FACTOR * float(np.sqrt(binary.sum())), 12), 0.3 * max(binary.shape))
     )
     need = NEED_SIDES if grow < 0.75 else NEED_SIDES - 1
+    if level == 1:
+        reach, need = min(2 * reach, int(0.4 * max(binary.shape))), 4
     near_skin = skin_around(skin > 0, reach, need)
     # Ink absorbs light: it is darker than the skin around it, or strongly coloured. Lighter, skin-ish colours (a pale
     # wall, a highlight) are never ink.
     darker = (local[..., 0] - lab[..., 0]) > 6.0
     vivid = np.hypot(lab[..., 1] - local[..., 1], lab[..., 2] - local[..., 2]) > 22.0
-    ink = ((binary > 0) & (skin == 0) & near_skin & (darker | vivid)).astype(np.uint8)
+    differs = np.ones_like(darker) if level == 1 else (darker | vivid)
+    ink = ((binary > 0) & (skin == 0) & near_skin & differs).astype(np.uint8)
     region = near_skin.astype(np.uint8)
     # Tiny specks are grain, not tattoo.
     n, comp, stats, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
@@ -198,15 +214,19 @@ def add_skin_texture(
     return cv2.cvtColor(lab.astype(np.uint8), cv2.COLOR_LAB2BGR)
 
 
-def remove_tattoo(
+def remove_tattoo_info(
     img_bgr: np.ndarray,
     mask: np.ndarray,
     *,
     strength: float = 1.0,
     grow: float = 0.3,
     algorithm: str = "lama",
-) -> np.ndarray:
-    """Remove the tattoo inside ``mask`` (uint8, non-zero = search here). Returns BGR uint8, same size.
+) -> tuple[np.ndarray, dict]:
+    """Remove the tattoo inside ``mask`` (uint8, non-zero = search here).
+
+    Returns ``(image, info)``; ``info["mode"]`` says how the ink was found: ``detected``, ``relaxed`` (the careful
+    detector found too little) or ``selection`` (nothing was found, so the whole selection was treated as tattoo).
+    ``info["ink_pct"]`` is the share of the selection that was repainted. Never silently does nothing.
 
     Pixels outside the selection, and selected pixels that are not ink on skin (the background, clothing), are
     returned unchanged.
@@ -219,12 +239,22 @@ def remove_tattoo(
         img_bgr = img_bgr[:, :, :3]
     binary = (mask > 0).astype(np.uint8)
     if not binary.any() or strength <= 0:
-        return img_bgr.copy()
+        return img_bgr.copy(), {"mode": "none", "ink_pct": 0.0}
 
     r = _radius(img_bgr.shape)
-    ink, skin, lab = find_ink(img_bgr, mask, grow)
-    if not ink.any():
-        return img_bgr.copy()
+    sel_area = int(binary.sum())
+    enough = max(30, int(0.02 * sel_area))  # less than this is probably noise, not the tattoo
+    for level, mode in ((0, "detected"), (1, "relaxed"), (2, "selection")):
+        ink, skin, lab = find_ink(img_bgr, mask, grow, level)
+        if level == 0:
+            skin0 = skin
+        if int(ink.sum()) >= enough:
+            break
+        if level == 1 and ((skin0 > 0) & (binary > 0)).sum() >= 0.95 * sel_area:
+            return img_bgr.copy(), {
+                "mode": "clean",
+                "ink_pct": 0.0,
+            }  # the selection is plain skin: nothing to remove
 
     k = np.ones((3, 3), np.uint8)
     clean = (skin > 0) & (
@@ -245,4 +275,10 @@ def remove_tattoo(
 
     a = (soft * float(np.clip(strength, 0.0, 1.0)))[:, :, None]
     out = img_bgr.astype(np.float32) * (1.0 - a) + filled.astype(np.float32) * a
-    return np.clip(out + 0.5, 0, 255).astype(np.uint8)
+    info = {"mode": mode, "ink_pct": round(100.0 * float(ink.sum()) / max(sel_area, 1), 1)}
+    return np.clip(out + 0.5, 0, 255).astype(np.uint8), info
+
+
+def remove_tattoo(img_bgr: np.ndarray, mask: np.ndarray, **kwargs) -> np.ndarray:
+    """:func:`remove_tattoo_info` without the info."""
+    return remove_tattoo_info(img_bgr, mask, **kwargs)[0]

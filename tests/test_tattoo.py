@@ -163,6 +163,34 @@ class TestRemoveTattoo:
         empty = T.remove_tattoo(img, np.zeros(img.shape[:2], np.uint8), algorithm="telea")
         assert np.array_equal(empty, img) and empty is not img
 
+    def test_a_huge_tattoo_still_gets_removed_and_says_how(self):
+        # A "sleeve": the ink fills the whole selection, so the careful detector has no skin around it to go by.
+        img, _, _, _ = _arm_scene()
+        sel = np.zeros(img.shape[:2], np.uint8)
+        sel[95:145, 130:230] = 1
+        sleeve = img.copy()
+        sleeve[95:145, 130:230] = (INK + np.random.default_rng(2).normal(0, 4, (50, 100, 3))).clip(
+            0, 255
+        )
+        out, info = T.remove_tattoo_info(sleeve, sel, algorithm="telea")
+        assert info["mode"] in ("detected", "relaxed", "selection") and info["ink_pct"] > 30
+        assert not np.array_equal(out, sleeve)  # it never silently does nothing
+        assert (
+            _lab_dist(out[100:140, 140:220].reshape(-1, 3).mean(0), INK) > 25
+        )  # and the ink is gone
+
+    def test_plain_skin_selection_is_reported_as_clean_and_left_alone(self):
+        img, _, _, _ = _arm_scene()
+        sel = np.zeros(img.shape[:2], np.uint8)
+        sel[85:105, 20:80] = 1
+        out, info = T.remove_tattoo_info(img, sel, algorithm="telea")
+        assert info["mode"] == "clean" and np.array_equal(out, img)
+
+    def test_info_for_a_normal_tattoo(self):
+        img, sel, _, _ = _arm_scene()
+        _, info = T.remove_tattoo_info(img, sel, algorithm="telea")
+        assert info["mode"] == "detected" and 0 < info["ink_pct"] < 60
+
     def test_bad_inputs(self):
         img, sel, _, _ = _arm_scene()
         with pytest.raises(ValidationError):
@@ -204,6 +232,7 @@ class TestEndpoint:
         r = self._post(test_client, img, sel)
         assert r.status_code == 200, r.text
         body = r.json()
+        assert body["mode"] == "detected" and body["ink_pct"] > 0
         assert body["output_size"] == {"width": 360, "height": 240}
         out = cv2.imdecode(
             np.frombuffer(base64.b64decode(body["final"].split(",", 1)[1]), np.uint8),

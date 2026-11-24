@@ -13,7 +13,7 @@ from app.api._common import read_image_bytes
 from app.exceptions import DecodeError, ValidationError
 from app.monitoring import image_process_seconds, image_process_total
 from app.pipeline.io import decode_to_bgr, encode_png
-from app.pipeline.tattoo import remove_tattoo
+from app.pipeline.tattoo import remove_tattoo_info
 
 router = APIRouter()
 
@@ -53,7 +53,9 @@ async def tattoo(
 
     started = time.perf_counter()
     try:
-        result = remove_tattoo(img, mask_img, strength=strength, grow=grow, algorithm=algorithm)
+        result, info = remove_tattoo_info(
+            img, mask_img, strength=strength, grow=grow, algorithm=algorithm
+        )
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.message) from exc
     except Exception as exc:
@@ -66,6 +68,8 @@ async def tattoo(
     png = encode_png(result)
     return {
         "final": f"data:image/png;base64,{base64.b64encode(png).decode('ascii')}",
+        "mode": info["mode"],
+        "ink_pct": info["ink_pct"],
         "elapsed_seconds": elapsed,
         "output_size": {"width": result.shape[1], "height": result.shape[0]},
     }
