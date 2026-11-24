@@ -55,7 +55,7 @@ const state = {
 const DEFAULT_SETTINGS = {
   background: {
     enabled: false, mode: "blur", blur_strength: 15, model_name: "u2netp",
-    color: "#00b140", zoom: 1, offset_x: 0, offset_y: 0, feather: 0, shrink: 0,
+    color: "#00b140", zoom: 1, offset_x: 0, offset_y: 0, feather: 0, shrink: 0, defringe: 0,
   },
   face: { enabled: false, target: 0, donor: 0, blend: 0.5, color_match: 0.5, restore: 0.8 },
   grain: { enabled: false, intensity: 0.4 },
@@ -356,6 +356,7 @@ function bindEvents() {
     ["#bg-x", "#bg-x-value", (v) => parseFloat(v).toFixed(2)],
     ["#bg-y", "#bg-y-value", (v) => parseFloat(v).toFixed(2)],
     ["#bg-feather", "#bg-feather-value", (v) => parseFloat(v).toFixed(2)],
+    ["#bg-defringe", "#bg-defringe-value", (v) => parseFloat(v).toFixed(2)],
     ["#bg-shrink", "#bg-shrink-value", (v) => parseFloat(v).toFixed(2)],
   ];
   sliders.forEach(([slider, output, fmt]) => {
@@ -676,6 +677,7 @@ function collectSettings() {
       offset_x: parseFloat($("#bg-x").value),
       offset_y: parseFloat($("#bg-y").value),
       feather: parseFloat($("#bg-feather").value),
+      defringe: parseFloat($("#bg-defringe").value),
       shrink: parseFloat($("#bg-shrink").value),
     },
     grain: {
@@ -744,7 +746,7 @@ function applyPreset(name) {
   if (bgModel && s.background.model_name) bgModel.value = s.background.model_name;
   const bgd = { ...DEFAULT_SETTINGS.background, ...s.background };
   setBgColor(bgd.color);
-  for (const [id, key] of [["bg-zoom", "zoom"], ["bg-x", "offset_x"], ["bg-y", "offset_y"], ["bg-feather", "feather"], ["bg-shrink", "shrink"]]) {
+  for (const [id, key] of [["bg-zoom", "zoom"], ["bg-x", "offset_x"], ["bg-y", "offset_y"], ["bg-feather", "feather"], ["bg-shrink", "shrink"], ["bg-defringe", "defringe"]]) {
     setSlider($(`#${id}`), bgd[key], $(`#${id}-value`), (v) => parseFloat(v).toFixed(2));
   }
   updateBlurStrengthVisibility();

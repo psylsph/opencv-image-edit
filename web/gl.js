@@ -67,9 +67,9 @@ void main() {
 // then a levels adjustment (shrink: > 0 edge in, < 0 edge out).
 const FRAG_BG = `#version 300 es
 precision highp float;
-uniform sampler2D uSrc, uBlur, uMask, uBgImg;
+uniform sampler2D uSrc, uBlur, uMask, uBgImg, uFg;
 uniform float uMode;   // 0 blur, 1 remove, 2 colour, 3 photo
-uniform float uShrink, uUseBlurMask;
+uniform float uShrink, uUseBlurMask, uDefringe;
 uniform vec3 uColor;
 uniform vec4 uRect;    // visible part of the photo: x, y, w, h as fractions (y from the top)
 uniform vec2 uSize;
@@ -95,7 +95,26 @@ void main() {
     else if (uShrink < 0.0) { float k = 0.5 * uShrink; m = m / (1.0 + k); }
     m = clamp(m, 0.0, 1.0);
   }
+  if (uMode > 1.5 && uDefringe > 0.0) {
+    // Edge pixels still carry some of the old background; pull them toward the subject's own colour nearby.
+    float core = clamp((texture(uMask, uv).r - 0.9) / 0.1, 0.0, 1.0);
+    vec4 fg = texture(uFg, f);
+    vec3 own = fg.rgb / max(fg.a, 1e-4);
+    s += (own - s) * (uDefringe * (1.0 - core) * clamp(fg.a / 0.1, 0.0, 1.0));
+  }
   o = vec4(mix(bg, s, m), 1.0);
+}`;
+
+// Colour-fringe removal, step 1: (colour * core, core) where "core" is the solidly-subject part of the matte.
+// Blurred, the ratio of the two is the subject's own colour spread outward (normalised convolution).
+const FRAG_CORE = `#version 300 es
+precision highp float;
+uniform sampler2D uSrc, uMask;
+in vec2 uv;
+out vec4 o;
+void main() {
+  float core = clamp((texture(uMask, uv).r - 0.9) / 0.1, 0.0, 1.0);
+  o = vec4(texture(uSrc, uv).rgb * core, core);
 }`;
 
 // Separable gaussian (one direction per pass).
@@ -107,16 +126,16 @@ uniform float uSigma;
 in vec2 uv;
 out vec4 o;
 void main() {
-  vec3 sum = texture(uTex, uv).rgb;
+  vec4 sum = texture(uTex, uv);
   float wsum = 1.0;
   for (int i = 1; i <= 24; i++) {
     float fi = float(i);
     if (fi > uSigma * 3.0) break;
     float w = exp(-(fi * fi) / (2.0 * uSigma * uSigma));
-    sum += w * (texture(uTex, uv + uStep * fi).rgb + texture(uTex, uv - uStep * fi).rgb);
+    sum += w * (texture(uTex, uv + uStep * fi) + texture(uTex, uv - uStep * fi));
     wsum += 2.0 * w;
   }
-  o = vec4(sum / wsum, 1.0);
+  o = sum / wsum;   // all four channels: the colour-fringe step blurs (colour * core, core)
 }`;
 
 // Final pass: sharpness (blend with the blurred copy), vignette, sepia, grayscale -> canvas.
@@ -161,6 +180,7 @@ export function liveParams(settings) {
     offsetY: Math.min(1, Math.max(-1, Number(b.offset_y) || 0)),
     feather: Math.min(1, Math.max(0, Number(b.feather) || 0)),
     shrink: Math.min(1, Math.max(-1, Number(b.shrink) || 0)),
+    defringe: Math.min(1, Math.max(0, Number(b.defringe) || 0)),
   };
   return {
     bg,
@@ -224,6 +244,7 @@ export function createRenderer(canvas, onError = () => {}) {
       base: program(gl, VERT, FRAG_BASE),
       blur: program(gl, VERT, FRAG_BLUR),
       bg: program(gl, VERT, FRAG_BG),
+      core: program(gl, VERT, FRAG_CORE),
       final: program(gl, VERT, FRAG_FINAL),
     };
   } catch (err) {
@@ -346,6 +367,7 @@ export function createRenderer(canvas, onError = () => {}) {
         base: program(gl, VERT, FRAG_BASE),
         blur: program(gl, VERT, FRAG_BLUR),
         bg: program(gl, VERT, FRAG_BG),
+        core: program(gl, VERT, FRAG_CORE),
         final: program(gl, VERT, FRAG_FINAL),
       };
     } catch (err) { onError("webgl restore failed", err); return; }
@@ -428,16 +450,30 @@ export function createRenderer(canvas, onError = () => {}) {
           blurTex = smallBlur(maskTex, Math.max(0.3, (bgp.feather * 12 * w) / serverW), 1);
           useBlurMask = 1;
         }
+        // Colour-fringe removal: (colour * core, core) blurred at the server's sigma (6 px at its processing size).
+        let fgTex = null;
+        if (replacing && bgp.defringe > 0) {
+          const sigma = Math.min(8, Math.max(0.3, (6 * w) / serverW));
+          pass(progs.core, B, [srcTex, maskTex], (u) => {
+            u("uFlip", 1);
+            gl.uniform1i(gl.getUniformLocation(progs.core.id, "uSrc"), 0);
+            gl.uniform1i(gl.getUniformLocation(progs.core.id, "uMask"), 1);
+          });
+          blurPass(B.tex, C, 1, 0, sigma, 0, w, h);
+          blurPass(C.tex, B, 0, 1, sigma, 0, w, h);
+          fgTex = B.tex;
+        }
         const rect = bgp.mode === "image"
           ? coverRect(bgImage.width, bgImage.height, w, h, bgp.zoom, bgp.offsetX, bgp.offsetY)
           : [0, 0, 1, 1];
         const bgw = bgImage ? bgImage.width : 1;
         const bgh = bgImage ? bgImage.height : 1;
-        pass(progs.bg, D, [srcTex, blurTex || srcTex, maskTex, bgTex || srcTex], (u) => {
+        pass(progs.bg, D, [srcTex, blurTex || srcTex, maskTex, bgTex || srcTex, fgTex || srcTex], (u) => {
           u("uFlip", 1);
           u("uMode", { blur: 0, remove: 1, color: 2, image: 3 }[bgp.mode]);
           u("uSize", w, h);
           u("uShrink", bgp.shrink);
+          u("uDefringe", fgTex ? bgp.defringe : 0);
           u("uUseBlurMask", useBlurMask);
           const loc = (n) => gl.getUniformLocation(progs.bg.id, n);
           gl.uniform3fv(loc("uColor"), hexToRgb(bgp.color));
@@ -446,6 +482,7 @@ export function createRenderer(canvas, onError = () => {}) {
           gl.uniform1i(loc("uBlur"), 1);
           gl.uniform1i(loc("uMask"), 2);
           gl.uniform1i(loc("uBgImg"), 3);
+          gl.uniform1i(loc("uFg"), 4);
         });
         input = D.tex;
         inputFlip = 0;

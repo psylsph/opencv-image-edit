@@ -673,3 +673,16 @@ def test_static_files_must_revalidate(test_client: TestClient):
     r = test_client.get("/")
     assert r.status_code == 200
     assert r.headers["cache-control"] == "no-cache"
+
+
+def test_defringe_setting_is_validated(test_client: TestClient):
+    import json
+
+    png = cv2.imencode(".png", np.zeros((20, 20, 3), np.uint8))[1].tobytes()
+    bad = {"background": {"enabled": True, "mode": "color", "defringe": 2}}
+    r = test_client.post(
+        "/api/v1/process",
+        files={"file": ("a.png", png, "image/png")},
+        data={"settings": json.dumps(bad)},
+    )
+    assert r.status_code == 422

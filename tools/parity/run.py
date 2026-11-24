@@ -118,6 +118,8 @@ CASES.update(
     {
         "bg_color": _bgcase(mode="color", color="#2040c0"),
         "bg_color_shrink_out": _bgcase(mode="color", color="#2040c0", shrink=-0.6),
+        "bg_color_defringe": _bgcase(mode="color", color="#2040c0", defringe=1.0),
+        "bg_image_defringe_feather": _bgcase(defringe=0.7, feather=0.3, shrink=-0.3),
         "bg_image": _bgcase(),
         "bg_image_zoom_pan": _bgcase(zoom=2.0, offset_x=-0.5, offset_y=0.3),
         "bg_image_feather_shrink": _bgcase(feather=0.5, shrink=0.4),
@@ -184,6 +186,7 @@ def server_render(rgb, s):
                 offset_y=b.get("offset_y", 0.0),
                 feather=b.get("feather", 0.0),
                 shrink=b.get("shrink", 0.0),
+                defringe=b.get("defringe", 0.0),
             )
         else:
             bgr = apply_background_blur(bgr, m, b["blur_strength"])

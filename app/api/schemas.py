@@ -19,6 +19,9 @@ class BackgroundRequest(BaseModel):
     offset_y: float = Field(default=0.0, ge=-1.0, le=1.0)
     feather: float = Field(default=0.0, ge=0.0, le=1.0)  # soften the subject's edge
     shrink: float = Field(default=0.0, ge=-1.0, le=1.0)  # > 0 edge in, < 0 edge out
+    defringe: float = Field(
+        default=0.0, ge=0, le=1
+    )  # remove old-background colour from the subject's edge
 
 
 class FaceRequest(BaseModel):

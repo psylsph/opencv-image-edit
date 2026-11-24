@@ -10,6 +10,7 @@ Covers:
 
 from __future__ import annotations
 
+import cv2
 import numpy as np
 import pytest
 
@@ -417,3 +418,67 @@ class TestReplaceBackground:
             apply_background_replace(img, mask)
         with pytest.raises(ValueError):
             apply_background_replace(img, mask, color="#000000", background=img)
+
+
+class TestDefringe:
+    """Colour-fringe removal: edge pixels lose the old background's colour."""
+
+    @staticmethod
+    def _scene():
+        # Red subject (left half) on a green old background, with a 6 px soft edge that is a red/green mix.
+        h, w = 40, 80
+        img = np.zeros((h, w, 3), np.uint8)
+        img[:, :] = (0, 200, 0)  # BGR green background
+        img[:, :40] = (0, 0, 220)  # BGR red subject
+        mask = np.zeros((h, w), np.float32)
+        mask[:, :40] = 1.0
+        mask = cv2.GaussianBlur(mask, (0, 0), 3)
+        # Photograph the blur: the edge colour is the matte-weighted mix of subject and background.
+        m = mask[:, :, None]
+        img = (
+            np.array([0, 0, 220], np.float32) * m + np.array([0, 200, 0], np.float32) * (1 - m)
+        ).astype(np.uint8)
+        return img, mask
+
+    def test_zero_is_a_no_op(self):
+        from app.pipeline.background import defringe_colors
+
+        img, mask = self._scene()
+        assert np.array_equal(defringe_colors(img, mask, 0.0), img.astype(np.float32))
+
+    def test_edge_loses_the_background_colour(self):
+        from app.pipeline.background import defringe_colors
+
+        img, mask = self._scene()
+        out = defringe_colors(img, mask, 1.0)
+        edge = (slice(None), 40)  # right at the edge: mask ~ 0.5
+        assert img[edge][:, 1].mean() > 60  # plenty of green contamination before
+        assert out[edge][:, 1].mean() < 15  # nearly gone after
+        assert out[edge][:, 2].mean() > 180  # and it is the subject's red
+
+    def test_solid_subject_and_far_background_are_untouched(self):
+        from app.pipeline.background import defringe_colors
+
+        img, mask = self._scene()
+        out = defringe_colors(img, mask, 1.0)
+        assert np.abs(out[:, :25] - img[:, :25]).max() < 1.0  # deep inside the subject
+        assert (
+            np.abs(out[:, 70:] - img[:, 70:]).max() < 1.0
+        )  # far from any subject (no core nearby)
+
+    def test_half_amount_is_in_between(self):
+        from app.pipeline.background import defringe_colors
+
+        img, mask = self._scene()
+        full, half = defringe_colors(img, mask, 1.0), defringe_colors(img, mask, 0.5)
+        g = lambda a: a[:, 40, 1].mean()  # noqa: E731
+        assert g(full) < g(half) < g(img.astype(np.float32))
+
+    def test_replace_background_uses_it(self):
+        img, mask = self._scene()
+        from app.pipeline.background import apply_background_replace
+
+        plain = apply_background_replace(img, mask, color="#0000ff")
+        clean = apply_background_replace(img, mask, color="#0000ff", defringe=1.0)
+        # Over a blue backdrop the green halo is what gives the edge away; it should shrink.
+        assert clean[:, 40, 1].mean() < plain[:, 40, 1].mean() - 20

@@ -103,9 +103,10 @@ Server contract (mirrors vid-ed-mobile's `bg.mode`):
 Making it look right (this is what separates a pasted-on cut-out from a good one; all of it is cheap maths):
 
 - [x] **Edge tools, part 1**: soften edge and edge in/out (1.12.0; same maths in `refine_matte()` and the shader).
-- [ ] **Edge tools, part 2**: remove colour fringe (desaturate edge pixels toward the new background) and an optional soft
-      shadow under the subject, as vid-ed-mobile's *Edge & shadow*.
-- [ ] **Foreground colour estimation** near the edge so the old background doesn't bleed through as a halo.
+- [x] **Colour fringe removal / foreground colour estimation** (1.14.0): edge pixels move toward the subject's own colour
+      spread outward from its solid core (normalised convolution, sigma 6 px at the processing size);
+      `defringe_colors()` on the server, a core pass + blurred (colour, core) pair in the shader; parity cases added.
+- [ ] **Edge tools, part 2b**: an optional soft shadow under the subject, as vid-ed-mobile's *Edge & shadow*.
 - [ ] **Match the subject to the scene**: optional "harmonise" (shift the subject's mean colour / brightness a little
       toward the new background).
 - [x] Background controls: zoom and position sliders (1.12.0).

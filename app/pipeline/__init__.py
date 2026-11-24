@@ -130,6 +130,7 @@ def process_pipeline(
                     offset_y=bg.offset_y,
                     feather=bg.feather,
                     shrink=bg.shrink,
+                    defringe=bg.defringe,
                 )
             else:  # remove
                 current = apply_background_remove(current, mask)

@@ -220,6 +220,29 @@ def refine_matte(mask: np.ndarray, feather: float = 0.0, shrink: float = 0.0) ->
     return np.clip(out, 0.0, 1.0)
 
 
+DEFRINGE_SIGMA = 6.0  # px at the processing size; the shader scales it with the output size
+_DEFRINGE_CORE_LO, _DEFRINGE_CORE_SPAN = 0.9, 0.1
+
+
+def defringe_colors(img_bgr: np.ndarray, mask: np.ndarray, amount: float) -> np.ndarray:
+    """Replace the old background's colour bleeding into the subject's edge with the subject's own nearby colour.
+
+    "Core" = pixels the matte is sure about (> 0.9). The subject colour is spread outward from the core with a
+    gaussian (normalised convolution: blur(colour * core) / blur(core)); edge pixels (core < 1) move toward it by
+    ``amount`` (0..1), faded out where no core is close. Returns float32 BGR. ``mask`` is the raw matte.
+    """
+    img = img_bgr[:, :, :3].astype(np.float32)
+    amount = float(np.clip(amount, 0.0, 1.0))
+    if amount <= 0.0:
+        return img
+    core = np.clip((mask.astype(np.float32) - _DEFRINGE_CORE_LO) / _DEFRINGE_CORE_SPAN, 0.0, 1.0)
+    num = cv2.GaussianBlur(img * core[:, :, None], (0, 0), DEFRINGE_SIGMA)
+    den = cv2.GaussianBlur(core, (0, 0), DEFRINGE_SIGMA)
+    own = num / np.maximum(den, 1e-4)[:, :, None]
+    weight = amount * (1.0 - core) * np.clip(den / 0.1, 0.0, 1.0)
+    return img + (own - img) * weight[:, :, None]
+
+
 def hex_to_bgr(color: str) -> tuple[int, int, int]:
     """``'#rrggbb'`` -> ``(b, g, r)``."""
     c = color.lstrip("#")
@@ -237,6 +260,7 @@ def apply_background_replace(
     offset_y: float = 0.0,
     feather: float = 0.0,
     shrink: float = 0.0,
+    defringe: float = 0.0,
 ) -> np.ndarray:
     """Put the subject (``mask`` = 1) over a flat ``color`` or a photo (``background``, BGR/BGRA).
 
@@ -248,7 +272,9 @@ def apply_background_replace(
     if img_bgr.ndim == 2:
         img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_GRAY2BGR)
     h, w = img_bgr.shape[:2]
-    mask = refine_matte(_resize_mask_to_image(mask, img_bgr.shape), feather, shrink)
+    raw = _resize_mask_to_image(mask, img_bgr.shape)
+    subject = defringe_colors(img_bgr, raw, defringe)
+    mask = refine_matte(raw, feather, shrink)
     if background is not None:
         if background.ndim == 2:
             background = cv2.cvtColor(background, cv2.COLOR_GRAY2BGR)
@@ -257,5 +283,5 @@ def apply_background_replace(
         bg = np.empty_like(img_bgr[:, :, :3])
         bg[:] = hex_to_bgr(color)
     alpha = mask[:, :, np.newaxis]
-    out = img_bgr[:, :, :3].astype(np.float32) * alpha + bg.astype(np.float32) * (1.0 - alpha)
+    out = subject * alpha + bg.astype(np.float32) * (1.0 - alpha)
     return np.clip(out + 0.5, 0, 255).astype(np.uint8)
