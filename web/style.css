@@ -232,6 +232,29 @@ img { max-width: 100%; height: auto; display: block; }
   touch-action: none;          /* paint mode: the finger draws */
 }
 #mask-canvas[data-mode="click"] { touch-action: pan-y pinch-zoom; }  /* tap to select, drag to scroll */
+#mask-canvas[data-zoomed="1"] { touch-action: none; }  /* zoomed in (or moving the picture): we handle every gesture */
+.zoom-layer { position: relative; transform-origin: 0 0; will-change: transform; }
+.zoom-controls {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  gap: 6px;
+  z-index: 5;
+}
+.zoom-controls[hidden] { display: none; }
+.zoom-controls button {
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 12px;
+  font-size: 20px;
+  line-height: 1;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+  cursor: pointer;
+}
+.zoom-controls button[aria-pressed="true"] { background: var(--accent); }
 
 /* --- Presets --- */
 .presets-section { margin-bottom: 22px; }

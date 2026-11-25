@@ -340,6 +340,7 @@ function bindEvents() {
 
   // Canvas pointer events for painting
   const canvas = $("#mask-canvas");
+  initZoom(canvas);
   canvas.addEventListener("pointerdown", startMaskStroke);
   canvas.addEventListener("pointermove", continueMaskStroke);
   canvas.addEventListener("pointerup", endMaskStroke);
@@ -511,6 +512,8 @@ function updateMaskCanvasVisibility() {
   const tool = activeTool();
   const visible = !!tool;
   canvas.hidden = !visible;
+  $("#zoom-controls").hidden = !visible;
+  if (!visible) resetView();
   const mode = tool === "bg" ? "paint" : state.mask.mode;
   // Click mode lets the page scroll under the finger; paint modes capture it.
   canvas.dataset.mode = mode;
@@ -555,6 +558,7 @@ function loadFile(file) {
   // Revoke previous preview URL
   if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
 
+  resetView();
   state.file = file;
   state.previewUrl = URL.createObjectURL(file);
   onFaceSourceChanged();
@@ -948,9 +952,8 @@ function setupMaskCanvas() {
   // the element box, mask coordinates and overlays are misaligned.
   const img = $("#preview");
   const updateSize = () => {
-    const rect = img.getBoundingClientRect();
-    const elemW = rect.width;
-    const elemH = rect.height;
+    const elemW = img.offsetWidth;  // layout size: unaffected by the zoom transform
+    const elemH = img.offsetHeight;
     const dpr = window.devicePixelRatio || 1;
 
     // Compute rendered image area within the element box (object-fit: contain)
@@ -1031,12 +1034,126 @@ function setupMaskCanvas() {
   });
 }
 
+// ============================================================================
+// Zoom / pan of the selection image (CSS transform on #zoom-layer)
+// ============================================================================
+
+const view = { s: 1, tx: 0, ty: 0, pan: false, ptrs: new Map(), g: null, drag: null, gestured: false };
+const MAX_ZOOM = 8;
+
+function stackPoint(clientX, clientY) {
+  const r = $(".preview-stack").getBoundingClientRect();
+  return { x: clientX - r.left, y: clientY - r.top };
+}
+
+function applyView() {
+  const layer = $("#zoom-layer");
+  const stack = $(".preview-stack");
+  view.s = Math.min(MAX_ZOOM, Math.max(1, view.s));
+  // Keep the picture covering the box: no empty margins when zoomed in.
+  view.tx = Math.min(0, Math.max(stack.clientWidth * (1 - view.s), view.tx));
+  view.ty = Math.min(0, Math.max(layer.offsetHeight * (1 - view.s), view.ty));
+  if (view.s === 1) view.tx = view.ty = 0;
+  layer.style.transform = view.s === 1 ? "" : `translate(${view.tx}px, ${view.ty}px) scale(${view.s})`;
+  const canvas = $("#mask-canvas");
+  canvas.dataset.zoomed = view.s > 1 || view.pan ? "1" : "0";
+  canvas.style.cursor = view.pan ? "grab" : "";
+}
+
+function zoomAt(factor, cx, cy) {
+  const ns = Math.min(MAX_ZOOM, Math.max(1, view.s * factor));
+  const k = ns / view.s;
+  view.tx = cx - (cx - view.tx) * k;
+  view.ty = cy - (cy - view.ty) * k;
+  view.s = ns;
+  applyView();
+}
+
+function resetView() {
+  view.s = 1;
+  view.tx = view.ty = 0;
+  view.pan = false;
+  view.ptrs.clear();
+  view.g = view.drag = null;
+  $("#zoom-pan")?.setAttribute("aria-pressed", "false");
+  applyView();
+}
+
+function initZoom(canvas) {
+  const stack = $(".preview-stack");
+  const centre = () => ({ x: stack.clientWidth / 2, y: stack.clientHeight / 2 });
+  $("#zoom-in").addEventListener("click", () => { const c = centre(); zoomAt(1.6, c.x, c.y); });
+  $("#zoom-out").addEventListener("click", () => { const c = centre(); zoomAt(1 / 1.6, c.x, c.y); });
+  $("#zoom-fit").addEventListener("click", resetView);
+  $("#zoom-pan").addEventListener("click", () => {
+    view.pan = !view.pan;
+    $("#zoom-pan").setAttribute("aria-pressed", String(view.pan));
+    applyView();
+  });
+  stack.addEventListener("wheel", (e) => {
+    if (canvas.hidden || !(e.ctrlKey || e.metaKey)) return;  // plain scrolling still scrolls the page
+    e.preventDefault();
+    const p = stackPoint(e.clientX, e.clientY);
+    zoomAt(Math.exp(-e.deltaY * 0.01), p.x, p.y);
+  }, { passive: false });
+
+  canvas.addEventListener("pointerdown", (e) => {
+    view.ptrs.set(e.pointerId, stackPoint(e.clientX, e.clientY));
+    if (view.ptrs.size === 1) {
+      view.gestured = false;
+      if (view.pan || e.button === 1) {
+        const p = view.ptrs.get(e.pointerId);
+        view.drag = { x: p.x, y: p.y, tx: view.tx, ty: view.ty };
+        try { canvas.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+        e.preventDefault();
+      }
+    } else if (view.ptrs.size === 2) {
+      view.gestured = true;
+      view.drag = null;
+      if (state.mask.drawing) {  // the first finger was the start of a pinch, not a stroke: take its dot back
+        state.mask.drawing = false;
+        undoMaskStroke();
+      }
+      const [a, b] = [...view.ptrs.values()];
+      view.g = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2, s0: view.s, tx0: view.tx, ty0: view.ty };
+    }
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!view.ptrs.has(e.pointerId)) return;
+    const p = stackPoint(e.clientX, e.clientY);
+    view.ptrs.set(e.pointerId, p);
+    if (view.ptrs.size === 2 && view.g) {
+      const [a, b] = [...view.ptrs.values()];
+      const g = view.g;
+      const ns = Math.min(MAX_ZOOM, Math.max(1, g.s0 * (Math.hypot(a.x - b.x, a.y - b.y) / g.d0)));
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      // The picture point that was under the fingers' start midpoint stays under their current midpoint.
+      view.tx = mx - ((g.mx - g.tx0) / g.s0) * ns;
+      view.ty = my - ((g.my - g.ty0) / g.s0) * ns;
+      view.s = ns;
+      applyView();
+    } else if (view.drag) {
+      view.tx = view.drag.tx + (p.x - view.drag.x);
+      view.ty = view.drag.ty + (p.y - view.drag.y);
+      applyView();
+    }
+  });
+  const up = (e) => {
+    view.ptrs.delete(e.pointerId);
+    if (view.ptrs.size < 2) view.g = null;
+    view.drag = null;
+  };
+  canvas.addEventListener("pointerup", up);
+  canvas.addEventListener("pointercancel", up);
+}
+
 function getCanvasCoords(evt) {
   const canvas = $("#mask-canvas");
   const rect = canvas.getBoundingClientRect();
   // pointer events give clientX/Y directly
-  const x = (evt.clientX ?? (evt.touches && evt.touches[0]?.clientX)) - rect.left;
-  const y = (evt.clientY ?? (evt.touches && evt.touches[0]?.clientY)) - rect.top;
+  // The canvas is drawn in unzoomed CSS px; the zoom layer scales it on screen.
+  const x = ((evt.clientX ?? (evt.touches && evt.touches[0]?.clientX)) - rect.left) / view.s;
+  const y = ((evt.clientY ?? (evt.touches && evt.touches[0]?.clientY)) - rect.top) / view.s;
   return { x, y };
 }
 
@@ -1051,6 +1168,7 @@ function pushMaskHistory() {
 function startMaskStroke(evt) {
   const bgPaint = isBackgroundPaintActive();
   if (!state.mask.ctx || (!state.mask.enabled && !bgPaint)) return;
+  if (view.pan || view.ptrs.size > 1 || evt.button === 1) return;  // moving the picture, not selecting
   // In click mode, object-removal click detection takes over — don't draw a paint dot.
   if (state.mask.enabled && state.mask.mode === "click") {
     onMaskClick(evt);
@@ -1084,7 +1202,7 @@ function paintMaskSegment(x0, y0, x1, y1) {
   const ctx = state.mask.ctx;
   // Scale brush from display px to canvas px (we used dpr scale above,
   // so the context is already in display units)
-  const brushSize = state.mask.brushSize;
+  const brushSize = state.mask.brushSize / view.s;  // the brush keeps its on-screen size, so zooming in makes it finer
   const r = brushSize / 2;
   ctx.lineWidth = brushSize;
   const paintColour = isBackgroundPaintActive()
@@ -1197,15 +1315,15 @@ function drawDetectedMaskOnCanvas(dataUrl) {
 async function runSegmentation(clientX, clientY) {
   if (state.mask.segmenting) return;
   // Convert client (display) coords to original image coords
-  const dispX = clientX - $("#mask-canvas").getBoundingClientRect().left;
-  const dispY = clientY - $("#mask-canvas").getBoundingClientRect().top;
+  const dispX = (clientX - $("#mask-canvas").getBoundingClientRect().left) / view.s;
+  const dispY = (clientY - $("#mask-canvas").getBoundingClientRect().top) / view.s;
   const imgX = Math.round(dispX * state.mask.imageW / state.mask.displayW);
   const imgY = Math.round(dispY * state.mask.imageH / state.mask.displayH);
   // Drop a small marker at the click point so the user sees what they clicked
   if (state.mask.ctx) {
     state.mask.ctx.fillStyle = "rgba(80, 200, 255, 0.95)";  // cyan dot
     state.mask.ctx.beginPath();
-    state.mask.ctx.arc(dispX, dispY, 6, 0, Math.PI * 2);
+    state.mask.ctx.arc(dispX, dispY, 6 / view.s, 0, Math.PI * 2);
     state.mask.ctx.fill();
   }
   // Send to server
@@ -1251,7 +1369,7 @@ function onMaskClick(evt) {
     $("#mask-canvas").removeEventListener("pointerup", onUp);
     const dx = upEvt.clientX - startX;
     const dy = upEvt.clientY - startY;
-    if (Math.hypot(dx, dy) > 10) return;  // it was a drag, not a tap
+    if (Math.hypot(dx, dy) > 10 || view.gestured) return;  // it was a drag or a pinch, not a tap
     runSegmentation(startX, startY);
   };
   $("#mask-canvas").addEventListener("pointerup", onUp, { once: true });

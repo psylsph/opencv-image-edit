@@ -30,11 +30,19 @@
       <input id="file-input" type="file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif" hidden />
       <div id="preview-container" hidden>
         <div class="preview-stack">
-          <img id="preview" alt="Uploaded preview" />
-          <canvas id="live-canvas" aria-hidden="true" hidden></canvas>
+          <div id="zoom-layer" class="zoom-layer">
+            <img id="preview" alt="Uploaded preview" />
+            <canvas id="live-canvas" aria-hidden="true" hidden></canvas>
+            <canvas id="mask-canvas" hidden></canvas>
+            <svg id="face-overlay" class="face-overlay" hidden aria-label="Detected faces"></svg>
+          </div>
           <span class="live-badge" aria-hidden="true">Live preview</span>
-          <canvas id="mask-canvas" hidden></canvas>
-          <svg id="face-overlay" class="face-overlay" hidden aria-label="Detected faces"></svg>
+          <div id="zoom-controls" class="zoom-controls" hidden role="group" aria-label="Zoom">
+            <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
+            <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
+            <button type="button" id="zoom-pan" aria-label="Move the picture (drag to pan)" aria-pressed="false">✋</button>
+            <button type="button" id="zoom-fit" aria-label="Fit the whole picture">⤢</button>
+          </div>
         </div>
         <div class="transform-bar" role="group" aria-label="Rotate and flip">
           <button class="btn btn-secondary" id="rot-ccw" type="button" aria-label="Rotate left"><span aria-hidden="true">⟲</span><small>Left</small></button>
@@ -53,6 +61,7 @@
             </fieldset>
           </div>
           <p class="control-hint" id="sel-hint"></p>
+          <p class="control-hint">Zoom in to select precisely: pinch with two fingers (or Ctrl + scroll), use + / −, and ✋ to drag the picture around. ⤢ fits it back.</p>
           <div id="sel-paint-controls" hidden>
             <label class="slider-row">
               <span>Brush size <output id="sel-brush-value">24</output></span>
@@ -448,6 +457,6 @@
     </button>
   </nav>
 
-  <script type="module" src="app.js?v=54"></script>
+  <script type="module" src="app.js?v=55"></script>
 </body>
 </html>
