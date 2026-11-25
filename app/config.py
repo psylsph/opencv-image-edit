@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     grain_intensity_max: float = Field(default=1.0, gt=0.0, le=2.0)
 
     # App metadata
-    app_version: str = "1.19.4"
+    app_version: str = "1.19.5"
     app_name: str = "opencv-image-edit"
 
     @field_validator("log_level")

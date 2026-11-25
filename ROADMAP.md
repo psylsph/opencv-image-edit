@@ -286,6 +286,15 @@ Risks and limits:
       searched on the person, the skin colour is only sampled from the person, and only the person's pixels are ever
       repainted, so no backdrop colour (however skin-like) can bleed in; measured on a real photo, 4583 backdrop pixels
       were repainted without the mask and 0 with it. Without the matting model the tool still works, unprotected.
+      1.19.5 (laser-like): after feedback that it painted the whole area, ink is now only (a) darker than the local skin
+      by the sensitivity margin, (b) either very dark (>60 L below skin) or off the skin's hue by a gap that shrinks with
+      sensitivity - shaded skin, creases and freckles keep the skin hue so they are never ink, (c) the tattoo's own colour
+      (on the straight skin-to-ink colour line, with the ink colour taken from the strongest candidates), (d) a patch
+      bigger than a speck. Each ink pixel is replaced by the colour of the *nearest real skin pixel* (distance-transform
+      labels, so pores and grain come along) blended 65/35 with the smooth local skin, plus measured grain, 1 px feathered
+      rim. The pool of skin pixels to copy from now includes shaded skin (leaving it out made the fill ~8 L too light,
+      the pale ghost). Measured on real photos: pixels in the painted area that are not tattoo and changed 0.0% for a
+      tight selection (7% with a sloppy mask that includes eyelashes), signed L error at the tattoo about 0.
       Ideas: show the detected ink and let the user veto, inpainting for complex backgrounds, parser protection for
       hair on faces (it mislabels dark ink as hair, so it needs care).
 

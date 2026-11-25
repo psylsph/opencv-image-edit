@@ -30,6 +30,11 @@ CHROMA_MAX = 32.0
 # The skin reference is built once with this fixed darkness margin, so changing the sensitivity only moves the
 # threshold and never changes what counts as clean skin (which once made the slider go the wrong way).
 REFERENCE_MARGIN = 18.0
+# Shaded skin (shadows, creases, wrinkles) is darker than lit skin but keeps skin's reddish hue; ink does not. A pixel is
+# ink if it is very dark (more than this many L units below the local skin) or its hue is off the skin's by at least a gap
+# that shrinks as the sensitivity rises (14 -> 6 colour units).
+VERY_DARK = 60.0
+HUE_GAP_AT_0, HUE_GAP_AT_1 = 14.0, 6.0
 # However sensitive, never accept a darkness margin below this many times the photo's own grain.
 GRAIN_FLOOR = 3.0
 
@@ -189,32 +194,140 @@ class _Prep:
         self.grain = float(np.median(np.abs(px - np.median(px))) * 1.4826) if px.size >= 50 else 2.0
 
 
+def _ink_colour(lab: np.ndarray, cand: np.ndarray) -> np.ndarray | None:
+    """The tattoo's own colour: the densest colour peak among the darkest half of the candidate ink pixels."""
+    px = lab[cand]
+    if len(px) < 20:
+        return None
+    px = px[px[:, 0] <= np.percentile(px[:, 0], 50)]  # the dark core, not the soft edge
+    q = np.stack([px[:, 0] * 0.5, px[:, 1], px[:, 2]], axis=1)
+    bins = np.floor(q / 5.0).astype(np.int64)
+    keys, counts = np.unique(bins, axis=0, return_counts=True)
+    peak = keys[int(np.argmax(counts))]
+    near = np.max(np.abs(bins - peak), axis=1) <= 1
+    return np.median(px[near], axis=0).astype(np.float32)
+
+
+def _on_skin_ink_line(
+    lab: np.ndarray, ref: np.ndarray, ink_colour: np.ndarray, tol: float
+) -> np.ndarray:
+    """Pixels whose colour is a mix of the local skin colour ``ref`` and the ink colour (bool map).
+
+    Ink on skin, including its soft anti-aliased edge, lies on the straight line between those two colours. A different
+    dark colour (a hair, a freckle, a shadow, an eyebrow) is off that line and is left alone.
+    """
+    axis = ink_colour[None, None, :] - ref
+    rel = lab - ref
+    w = np.array([0.5, 1.0, 1.0], np.float32)
+    axis_w, rel_w = axis * w, rel * w
+    span2 = np.maximum((axis_w**2).sum(-1), 1e-6)
+    t = np.clip((rel_w * axis_w).sum(-1) / span2, 0.0, 1.2)
+    resid = np.linalg.norm(rel_w - t[..., None] * axis_w, axis=-1)
+    return (t > 0.1) & (resid < np.maximum(tol, 0.22 * np.sqrt(span2)))
+
+
 def find_ink(
     img_bgr: np.ndarray, mask: np.ndarray, sensitivity: float, foreground: np.ndarray | None = None
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Returns ``(ink, skin, lab)``: 0/1 masks of the ink pixels and of the clean skin, plus the LAB image.
 
-    Ink = selected pixels darker than the skin around them by the sensitivity's margin (never below a few times the
-    photo's grain) that are not strongly coloured. The skin reference does not depend on the sensitivity, so raising it
-    can only add ink.
+    Ink = selected pixels that (1) are darker than the skin around them by the sensitivity's margin, (2) are not
+    strongly coloured, (3) are the *tattoo's own colour* (a mix of skin and the dominant dark colour: so a hair, a
+    freckle or an eyebrow of a different colour is not touched), and (4) belong to a patch bigger than a speck of
+    skin texture. Pixel by pixel: nothing else in the area changes.
     """
     prep = _Prep(img_bgr, mask, foreground)
     s = float(np.clip(sensitivity, 0.0, 1.0))
     margin = max(margin_for(s), GRAIN_FLOOR * prep.grain)
-    dark = (prep.ref_luma - prep.luma) > margin
-    ink = (dark & prep.chroma_ok & prep.near_skin & (prep.binary > 0)).astype(np.uint8)
-    # Specks are grain; the ink's soft edge is added back (more at high sensitivity), inside the selection only.
     k = np.ones((3, 3), np.uint8)
+    sel = prep.binary > 0
+    drop = prep.ref_luma - prep.luma
+    # Hue gap from the skin (a, b only): shadows and creases stay on the skin's hue, ink does not.
+    ab_ref = (
+        np.median(prep.lab[prep.skin][:, 1:], axis=0)
+        if prep.skin.any()
+        else np.array([145.0, 150.0], np.float32)
+    )
+    off_hue = np.hypot(prep.lab[..., 1] - ab_ref[0], prep.lab[..., 2] - ab_ref[1])
+    gap = HUE_GAP_AT_0 + (HUE_GAP_AT_1 - HUE_GAP_AT_0) * s
+    inkish = (drop > VERY_DARK) | (off_hue > gap)
+    dark = (drop > margin) & inkish & prep.chroma_ok & prep.near_skin & sel
+    cand = dark
+    # The ink colour comes from the strongest (not the faintest) candidates, so it does not move with the slider.
+    strong = (
+        ((prep.ref_luma - prep.luma) > max(margin_for(0.5), GRAIN_FLOOR * prep.grain))
+        & ((drop > VERY_DARK) | (off_hue > HUE_GAP_AT_0))
+        & prep.chroma_ok
+        & prep.near_skin
+        & sel
+    )
+    # A faint tattoo has no 'strong' pixels: then the ink colour comes from the candidates at the current sensitivity.
+    colour = _ink_colour(
+        prep.lab, strong if strong.sum() >= max(30, int(0.001 * sel.sum())) else dark
+    )
+    if colour is not None:
+        ref = np.stack(
+            [
+                prep.ref_luma,
+                *[
+                    np.full_like(prep.ref_luma, c)
+                    for c in np.median(prep.lab[prep.skin][:, 1:], axis=0)
+                ],
+            ],
+            axis=-1,
+        )
+        cand = dark & _on_skin_ink_line(prep.lab, ref, colour, tol=6.0 + 10.0 * s)
+    ink = cand.astype(np.uint8)
+    # Skin texture is full of 1-2 px dark specks (pores, stubble, grain): ignore anything narrower than a few pixels,
+    # and anything too small to be part of a drawing.
+    ink = cv2.morphologyEx(
+        ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    )
     n, comp, stats, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
-    for i in range(1, n):
-        if stats[i, cv2.CC_STAT_AREA] < max(4, prep.r):
-            ink[comp == i] = 0
-    ink = cv2.dilate(ink, k, iterations=1 + int(round(2 * s))) & prep.binary
-    # Clean skin for the fill: every skin-looking pixel near the selection (shaded ones included) except anything even
-    # slightly darker than the skin around it, so the ink's faint halo does not tint the replacement.
-    faint = (prep.ref_luma - prep.luma) > 8.0
-    clean = prep.pool & ~faint & prep.fg
+    if n > 1:
+        areas = stats[1:, cv2.CC_STAT_AREA]
+        smallest = max(8, prep.r * prep.r // 2, int(0.01 * areas.max()))
+        for i in range(1, n):
+            if stats[i, cv2.CC_STAT_AREA] < smallest:
+                ink[comp == i] = 0
+    # Just the ink's own soft edge (one pixel), so nothing beyond the drawing is touched.
+    ink = cv2.dilate(ink, k, iterations=1) & prep.binary
+    # Clean skin for the fill: every skin-looking pixel near the selection, lit or shaded alike (the caller drops the
+    # pixels right around the ink). Leaving shaded skin out biased the replacement lighter than its surroundings.
+    clean = prep.pool & prep.fg
     return ink.astype(np.uint8), clean.astype(np.uint8), prep.lab
+
+
+def nearest_skin_colour(lab: np.ndarray, skin_ok: np.ndarray, hole: np.ndarray) -> np.ndarray:
+    """For every ``hole`` pixel, the colour (LAB) of the nearest real skin pixel: laser-style, pixel for pixel.
+
+    A copy of an actual neighbouring skin pixel, so pores and grain come along and no smooth patch appears. Works on the
+    area around the hole only. Pixels with no skin anywhere near get the median skin colour.
+    """
+    out = np.broadcast_to(
+        np.median(lab[skin_ok], axis=0) if skin_ok.any() else lab.reshape(-1, 3).mean(0), lab.shape
+    ).copy()
+    ys, xs = np.nonzero(hole > 0)
+    if ys.size == 0:
+        return out
+    pad = 40
+    y0, y1 = max(0, ys.min() - pad), min(lab.shape[0], ys.max() + 1 + pad)
+    x0, x1 = max(0, xs.min() - pad), min(lab.shape[1], xs.max() + 1 + pad)
+    ok = skin_ok[y0:y1, x0:x1] & (hole[y0:y1, x0:x1] == 0)
+    if not ok.any():
+        return out
+    src = np.where(ok, 0, 1).astype(np.uint8)  # zero = a skin pixel to copy from
+    _d, labels = cv2.distanceTransformWithLabels(
+        src, cv2.DIST_L2, 5, labelType=cv2.DIST_LABEL_PIXEL
+    )
+    zy, zx = np.nonzero(ok)  # labels count the zero pixels in row-major order, starting at 1
+    idx = np.clip(labels - 1, 0, len(zy) - 1)
+    near = lab[y0:y1, x0:x1][zy[idx], zx[idx]]
+    region = out[y0:y1, x0:x1]
+    h = hole[y0:y1, x0:x1] > 0
+    region[h] = near[h]
+    out[y0:y1, x0:x1] = region
+    return out
 
 
 def add_skin_texture(
@@ -286,17 +399,21 @@ def remove_tattoo_info(
         clean = (clean > 0) & (
             cv2.dilate(ink, k, iterations=3) == 0
         )  # skin that is certainly not ink or its edge
-        fill_lab = local_skin(
-            lab, clean, ink, r
-        )  # the flesh colour next to each ink pixel, from skin pixels only
+        # Pixel for pixel: each ink pixel becomes the colour of the nearest real skin pixel (pores and grain come along),
+        # softened a little by the smooth local skin colour so single copied pixels do not show as streaks.
+        copied = nearest_skin_colour(lab, clean, ink)
+        smooth = local_skin(lab, clean, ink, r)
+        fill_lab = 0.65 * copied + 0.35 * smooth
         filled = cv2.cvtColor(np.clip(fill_lab, 0, 255).astype(np.uint8), cv2.COLOR_LAB2BGR)
-        soft = np.clip(
-            cv2.GaussianBlur(ink.astype(np.float32), (0, 0), max(0.8, r / 3.0)) * 1.5, 0.0, 1.0
-        )
+        # Ink pixels are replaced completely; only a 1 px feathered rim beyond them.
+        soft = np.clip(cv2.GaussianBlur(ink.astype(np.float32), (0, 0), 0.7) * 1.3, 0.0, 1.0)
+        soft = np.where(ink > 0, 1.0, soft).astype(np.float32)
         soft *= binary.astype(np.float32)  # never outside the selection
         if foreground is not None:
             soft *= (foreground > 0).astype(np.float32)  # and never on the backdrop
-        filled = add_skin_texture(filled, current, soft, clean.astype(np.uint8))
+        filled = add_skin_texture(
+            filled, current, soft, clean.astype(np.uint8)
+        )  # grain the copied pixels lack
         out_f = (
             current.astype(np.float32) * (1.0 - soft[:, :, None])
             + filled.astype(np.float32) * soft[:, :, None]

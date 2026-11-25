@@ -59,14 +59,14 @@ class TestSensitivity:
 
     def test_faint_ink_needs_a_higher_setting(self):
         img, sel, inked, _ = _arm_scene(
-            ink_colour=(95, 120, 165), ink_alpha=1.0
-        )  # only slightly darker than skin
+            ink_colour=(150, 135, 135), ink_alpha=1.0
+        )  # a faded blue-grey ink: only a little darker than the skin
         low = T.find_ink(img, sel, 0.0)[0]
         high = T.find_ink(img, sel, 1.0)[0]
         assert (high & inked).sum() > 5 * max((low & inked).sum(), 1)
 
     def test_more_sensitivity_removes_more_of_a_faint_tattoo(self):
-        img, sel, inked, _ = _arm_scene(ink_colour=(95, 120, 165))
+        img, sel, inked, _ = _arm_scene(ink_colour=(150, 135, 135))
         m = inked > 0
 
         def left(s):
@@ -286,6 +286,53 @@ class TestPersonMask:
         img, sel, _, _ = self._scene()
         out, info = T.remove_tattoo_info(img, sel, foreground=np.zeros(img.shape[:2], np.uint8))
         assert info["mode"] == "none" and np.array_equal(out, img)
+
+
+class TestShadedSkinIsNotInk:
+    """Only the laser-like pixels are replaced: skin shadows, creases and freckles keep their pixels."""
+
+    @staticmethod
+    def _scene():
+        img, sel, inked, arm = _arm_scene()
+        img = img.copy()
+        rng = np.random.default_rng(9)
+        # Skin features inside the painted area: a soft shadow band, a crease, and some freckles (all skin-hued, darker).
+        shade = np.ones(img.shape[:2], np.float32)
+        shade[150:160, 110:260] = 0.72  # a shadow along the arm's lower edge
+        shade[80:83, 120:170] = 0.66  # a thin crease
+        for _ in range(25):
+            y, x = rng.integers(75, 165), rng.integers(115, 255)
+            if not inked[max(0, y - 6) : y + 6, max(0, x - 6) : x + 6].any():
+                shade[y : y + 2, x : x + 2] = 0.7
+        arm_px = arm > 0
+        out = img.astype(np.float32)
+        out[arm_px] *= shade[arm_px][:, None]
+        return np.clip(out, 0, 255).astype(np.uint8), sel, inked, arm
+
+    def test_shadows_creases_and_freckles_are_left_alone(self):
+        img, sel, inked, arm = self._scene()
+        out = T.remove_tattoo(img, sel, grow=0.5)
+        features = np.zeros(img.shape[:2], bool)
+        features[150:160, 110:260] = True
+        features[80:83, 120:170] = True
+        features &= arm > 0
+        assert np.array_equal(out[features], img[features])
+
+    def test_pixels_that_are_not_ink_are_not_changed_at_all(self):
+        img, sel, inked, arm = self._scene()
+        out = T.remove_tattoo(img, sel, grow=0.5)
+        near_ink = cv2.dilate(inked.astype(np.uint8), np.ones((3, 3), np.uint8), iterations=4) > 0
+        away = (sel > 0) & ~near_ink
+        changed = (np.abs(out.astype(int) - img.astype(int)).sum(2) > 6) & away
+        assert (
+            changed.sum() / max(away.sum(), 1) < 0.01
+        )  # under 1% of the painted area away from the tattoo
+
+    def test_the_tattoo_itself_is_still_removed(self):
+        img, sel, inked, _ = self._scene()
+        out = T.remove_tattoo(img, sel, grow=0.5)
+        skin = np.array([110, 140, 195], np.float32)
+        assert _lab_dist(out[inked > 0].mean(0), skin * 0.93) < 15
 
 
 class TestHelpers:
