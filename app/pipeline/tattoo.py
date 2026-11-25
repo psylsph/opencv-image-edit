@@ -393,6 +393,78 @@ def remove_tattoo_info(
     return out, {"mode": "detected", "ink_pct": a.ink_pct, "passes": 1}
 
 
+LAMA_PASSES = 20
+
+
+def _temporary_background(img_bgr: np.ndarray, fg: np.ndarray) -> np.ndarray:
+    """``img_bgr`` with the backdrop (where ``fg`` is zero) swapped for the person's own nearest colour, smoothed.
+
+    This is the "temporary background removal": the inpainting model then sees only skin, so it can never pull a wall,
+    curtain or highlight into the repair. The real backdrop is put back afterwards.
+    """
+    bg = (fg == 0).astype(np.uint8)
+    if not bg.any() or bg.all():
+        return img_bgr.copy()
+    _, labels = cv2.distanceTransformWithLabels(bg, cv2.DIST_L2, 3, labelType=cv2.DIST_LABEL_PIXEL)
+    src = np.flatnonzero(bg.ravel() == 0)  # label k (1-based) = the k-th person pixel in scan order
+    flat = img_bgr.reshape(-1, img_bgr.shape[-1])
+    filled = flat[src[labels.ravel() - 1]].reshape(img_bgr.shape)
+    k = _odd(max(img_bgr.shape[:2]) * 0.03)
+    filled = cv2.GaussianBlur(filled, (k, k), 0)  # no nearest-pixel streaks
+    return np.where(bg[:, :, None] > 0, filled, img_bgr)
+
+
+def remove_tattoo_lama(
+    img_bgr: np.ndarray,
+    mask: np.ndarray,
+    *,
+    strength: float = 1.0,
+    foreground: np.ndarray | None = None,
+    passes: int = LAMA_PASSES,
+) -> tuple[np.ndarray, dict]:
+    """Remove the selection with AI object removal (LaMa, ``passes`` passes), with the backdrop temporarily removed.
+
+    Only the selected part of the person is repainted; with ``foreground`` the backdrop is swapped for skin colour
+    while the model runs and restored afterwards, so a highlighted or skin-like background cannot leak in.
+    Raises ``ModelNotFoundError`` when the LaMa model is missing.
+    """
+    from app.models.lama import LaMa
+
+    if mask.dtype != np.uint8:
+        raise ValidationError(f"mask must be uint8, got {mask.dtype}")
+    if img_bgr.shape[:2] != mask.shape[:2]:
+        raise ValidationError("mask size does not match the image")
+    if img_bgr.ndim == 3 and img_bgr.shape[2] == 4:
+        img_bgr = img_bgr[:, :, :3]
+    sel = (mask > 0) if foreground is None else ((mask > 0) & (foreground > 0))
+    if not sel.any() or strength <= 0:
+        return img_bgr.copy(), {"mode": "none", "ink_pct": 0.0, "passes": 0}
+
+    ys, xs = np.nonzero(sel)
+    pad = max(64, int(0.75 * max(ys.max() - ys.min(), xs.max() - xs.min())))
+    y0, y1 = max(0, ys.min() - pad), min(img_bgr.shape[0], ys.max() + 1 + pad)
+    x0, x1 = max(0, xs.min() - pad), min(img_bgr.shape[1], xs.max() + 1 + pad)
+    crop = np.s_[y0:y1, x0:x1]
+    sub = img_bgr[crop]
+    hole = sel[crop].astype(np.uint8) * 255
+    work = sub if foreground is None else _temporary_background(sub, foreground[crop])
+
+    repaired = LaMa.get().infer(work, hole, iterations=max(1, int(passes)))
+
+    w = np.clip(cv2.GaussianBlur(hole.astype(np.float32) / 255.0, (0, 0), 1.5), 0.0, 1.0)
+    if foreground is not None:
+        w = w * (foreground[crop] > 0)  # the real backdrop is never repainted
+    w = (w * float(np.clip(strength, 0.0, 1.0)))[:, :, None]
+    blended = sub.astype(np.float32) * (1.0 - w) + repaired.astype(np.float32) * w
+    out = img_bgr.copy()
+    out[crop] = np.where(w > 0, np.clip(blended + 0.5, 0, 255).astype(np.uint8), sub)
+    return out, {
+        "mode": "lama",
+        "ink_pct": round(100.0 * float(sel.sum()) / max(1, int((mask > 0).sum())), 1),
+        "passes": int(passes),
+    }
+
+
 def remove_tattoo(img_bgr: np.ndarray, mask: np.ndarray, **kwargs) -> np.ndarray:
     """:func:`remove_tattoo_info` without the info."""
     return remove_tattoo_info(img_bgr, mask, **kwargs)[0]

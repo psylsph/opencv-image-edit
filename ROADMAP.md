@@ -297,6 +297,10 @@ Risks and limits:
       tight selection (7% with a sloppy mask that includes eyelashes), signed L error at the tattoo about 0.
       Ideas: show the detected ink and let the user veto, inpainting for complex backgrounds, parser protection for
       hair on faces (it mislabels dark ink as hair, so it needs care).
+      1.19.7: the default (`algorithm=lama`) is now the AI object remover: the backdrop (matting mask) is swapped for the
+      person's nearest skin colour, the painted skin is removed with 20 LaMa passes, then the real backdrop is restored.
+      Suggested by the user: object removal beat the colour algorithm whenever the background was not highlighted. The
+      colour algorithm remains as the fallback (and `algorithm=colour`).
       1.19.6 (rewrite, big faded tattoos): a real photo of a large, soft, grey-green shoulder tattoo on pale skin came out as
       a patchwork (flat colour regions with seams, the faint half left in place). Cause: every earlier version looked for
       ink "much darker than the skin around it" and filled from the surrounding skin, which fails when the tattoo is

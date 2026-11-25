@@ -414,3 +414,57 @@ class TestEndpoint:
             },
         )
         assert r.status_code == 400
+
+
+class _StubLaMa:
+    """Records what the model was given; 'inpaints' the hole with the mean of the unmasked pixels."""
+
+    def __init__(self):
+        self.seen = None
+        self.iterations = None
+
+    def infer(self, img, mask, iterations=1, **_):
+        self.seen, self.iterations = img.copy(), iterations
+        out = img.copy()
+        out[mask > 0] = img[mask == 0].mean(axis=0).astype(np.uint8)
+        return out
+
+
+class TestLamaTattoo:
+    def _run(self, monkeypatch, **kw):
+        from app.models.lama import LaMa
+
+        stub = _StubLaMa()
+        monkeypatch.setattr(LaMa, "get", classmethod(lambda cls, *a, **k: stub))
+        img, sel, _, arm = _arm_scene()
+        out, info = T.remove_tattoo_lama(img, sel, foreground=arm, **kw)
+        return img, sel, arm, out, info, stub
+
+    def test_runs_twenty_passes_and_hides_the_backdrop_from_the_model(self, monkeypatch):
+        img, _, arm, _, info, stub = self._run(monkeypatch)
+        assert stub.iterations == 20 and info["mode"] == "lama" and info["passes"] == 20
+        # Where the model looked, the wall is gone: every backdrop pixel it saw is skin-coloured, not wall-blue.
+        crop_arm = arm[: stub.seen.shape[0], : stub.seen.shape[1]]
+        wall_seen = stub.seen[crop_arm == 0].astype(np.float32)
+        assert np.abs(wall_seen - WALL).mean() > 40
+
+    def test_backdrop_is_restored_and_only_selected_skin_changes(self, monkeypatch):
+        img, sel, arm, out, _, _ = self._run(monkeypatch)
+        assert np.array_equal(
+            out[arm == 0], img[arm == 0]
+        )  # wall untouched, even under the sloppy selection
+        assert np.array_equal(out[sel == 0][:100], img[sel == 0][:100])
+        assert (out[(sel > 0) & (arm > 0)] != img[(sel > 0) & (arm > 0)]).any()
+
+    def test_strength_zero_changes_nothing(self, monkeypatch):
+        img, sel, _, _, _, _ = self._run(monkeypatch)
+        from app.pipeline.tattoo import remove_tattoo_lama
+
+        out, info = remove_tattoo_lama(img, sel, strength=0.0)
+        assert np.array_equal(out, img) and info["mode"] == "none"
+
+    def test_temporary_background_keeps_the_person_and_replaces_the_rest(self):
+        img, _, _, arm = _arm_scene()
+        tmp = T._temporary_background(img, arm)
+        assert np.array_equal(tmp[arm > 0], img[arm > 0])
+        assert np.abs(tmp[arm == 0].astype(np.float32) - WALL).mean() > 40

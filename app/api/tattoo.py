@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import time
 
 import cv2
@@ -10,11 +11,12 @@ import numpy as np
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.api._common import read_image_bytes
-from app.exceptions import DecodeError, ValidationError
+from app.exceptions import DecodeError, ModelNotFoundError, ValidationError
 from app.monitoring import image_process_seconds, image_process_total
 from app.pipeline.io import decode_to_bgr, encode_png
-from app.pipeline.tattoo import remove_tattoo_info
+from app.pipeline.tattoo import remove_tattoo_info, remove_tattoo_lama
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -47,10 +49,11 @@ async def tattoo(
     grow: float = Form(default=0.5),
     algorithm: str = Form(default="lama"),
 ) -> dict:
-    """Remove the dark tattoo ink inside ``mask`` (white = search here; it may overshoot onto the background).
+    """Remove the tattoo inside ``mask`` (white = the tattoo; it may overshoot onto the background).
 
-    Pixels much darker than the skin around them are replaced with the flesh tone next to them. ``strength`` 0..1
-    (1 = gone, less = faded), ``grow`` 0..1 is the sensitivity (higher catches fainter ink). ``algorithm`` is ignored.
+    ``algorithm="lama"`` (default): the backdrop is temporarily replaced by skin colour and the selected skin is removed
+    with 20 passes of AI object removal, then the backdrop is restored. Any other value uses the colour algorithm, where
+    ``grow`` 0..1 is the sensitivity (higher catches fainter ink). ``strength`` 0..1 (1 = gone, less = faded).
     """
     try:
         img = decode_to_bgr(await read_image_bytes(file))
@@ -75,9 +78,18 @@ async def tattoo(
     foreground = _person_mask(img)
     started = time.perf_counter()
     try:
-        result, info = remove_tattoo_info(
-            img, mask_img, strength=strength, grow=grow, algorithm=algorithm, foreground=foreground
-        )
+        info = None
+        if algorithm == "lama":
+            try:
+                result, info = remove_tattoo_lama(
+                    img, mask_img, strength=strength, foreground=foreground
+                )
+            except ModelNotFoundError:  # no LaMa model: fall back to the colour algorithm
+                logger.warning("tattoo: LaMa model missing, using the colour algorithm")
+        if info is None:
+            result, info = remove_tattoo_info(
+                img, mask_img, strength=strength, grow=grow, foreground=foreground
+            )
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.message) from exc
     except Exception as exc:
