@@ -274,6 +274,14 @@ Risks and limits:
       model spreads in short steps so sunlit highlights count as skin; big tattoos get their solid interior removed by
       spreading through connected pixels of the ink's own colour. On the test photo, a tight selection catches 96.5% at
       maximum, a solid patch 100%.
+      1.19.2: the replacement is bounded to flesh tones (`bound_to_skin`: fill pixels that stray from the local skin
+      colour, estimated from clean skin pixels only, are replaced by it), and a loose selection can no longer drag the
+      background in: ink must lie on the straight colour line between the local skin and the tattoo's own dominant colour
+      (a red curtain, lips, teeth, a dark jacket are off it), only skin/ink pixels are ever changed, the selection must
+      actually be on skin (else "that isn't on skin"), the whole-selection fallback only runs for a one-colour patch
+      (else "unsure", nothing changed), the person's face colour anchors what counts as skin, and the parser protects
+      eyes, brows, mouth and hair on faces. Limits: ink that overlaps an eye or the mouth is treated as ink there; a
+      skin-coloured background (a pink wall) cannot be told from skin by colour alone.
       Tried and dropped: filling from the ring around the selection (bled background in), a global tone-matching step
       (pulled in hair colours), 'holes fully enclosed by skin' (too strict on JPEG noise).
 

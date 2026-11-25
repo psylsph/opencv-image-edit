@@ -1519,9 +1519,11 @@ async function processTattoo() {
     relaxed: `Removed with a looser match (${data.ink_pct}% of the selection): the tattoo was hard to tell from skin. Raise “Catch faint ink” or select it more closely if it missed some.`,
     selection: "Couldn't tell the tattoo from the skin, so the whole selection was repainted. Select just the tattoo (tap it) for a cleaner result.",
     clean: "No tattoo colours found in that selection: it looks like plain skin, so nothing was changed.",
+    unsure: "Couldn't find tattoo ink there: the selection mixes skin with other things (hair, background), so nothing was changed. Tap the tattoo itself, or paint closer around it.",
+    noskin: "That selection isn't on skin (it looks like background or clothing), so nothing was changed. Select the tattoo itself.",
     none: "Nothing to remove (the amount is 0).",
   }[data.mode] || `Tattoo removed in ${secs}s`;
-  setStatus(msg, data.mode === "selection" || data.mode === "clean" ? "" : "success");
+  setStatus(msg, ["selection", "clean", "noskin", "unsure"].includes(data.mode) ? "" : "success");
   state.processing = false;
   updateProcessButton();
 }
