@@ -52,7 +52,7 @@ async def tattoo(
     """Remove the tattoo inside ``mask`` (white = the tattoo; it may overshoot onto the background).
 
     ``algorithm="lama"`` (default): the backdrop is temporarily replaced by skin colour and the selected skin is removed
-    with 20 passes of AI object removal, then the backdrop is restored. Any other value uses the colour algorithm, where
+    with AI object removal plus matching skin grain, then the backdrop is restored. Any other value uses the colour algorithm, where
     ``grow`` 0..1 is the sensitivity (higher catches fainter ink). ``strength`` 0..1 (1 = gone, less = faded).
     """
     try:

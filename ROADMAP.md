@@ -301,6 +301,10 @@ Risks and limits:
       person's nearest skin colour, the painted skin is removed with 20 LaMa passes, then the real backdrop is restored.
       Suggested by the user: object removal beat the colour algorithm whenever the background was not highlighted. The
       colour algorithm remains as the fallback (and `algorithm=colour`).
+      1.19.9: two-stage repair (retouchers' frequency-separation workflow): LaMa fill for colour/tone only, then real skin
+      grain (measured per LAB channel from the clean ring around the selection) added at full resolution, because LaMa
+      works on a 512 px copy and its fill looks smooth/painted. Passes 20 -> 1: measured on the real model, 1 and 6 passes give byte-identical output (the model ignores what is inside
+      the hole), so extra passes only cost time (about 10 s per run on this CPU instead of 100).
       1.19.6 (rewrite, big faded tattoos): a real photo of a large, soft, grey-green shoulder tattoo on pale skin came out as
       a patchwork (flat colour regions with seams, the faint half left in place). Cause: every earlier version looked for
       ink "much darker than the skin around it" and filled from the surrounding skin, which fails when the tattoo is

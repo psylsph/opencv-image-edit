@@ -393,7 +393,75 @@ def remove_tattoo_info(
     return out, {"mode": "detected", "ink_pct": a.ink_pct, "passes": 1}
 
 
-LAMA_PASSES = 20
+# Measured: more passes give a byte-identical fill (LaMa ignores what is inside the hole) and cost 5x the time.
+LAMA_PASSES = 1
+
+
+def _diffuse_colour(img_bgr: np.ndarray, hole: np.ndarray) -> np.ndarray:
+    """Smooth colour (LAB a, b) for the hole: the skin around it diffused inwards (harmonic fill on a small grid)."""
+    h, w = hole.shape
+    f = max(1.0, max(h, w) / 96.0)
+    sw, sh = max(2, round(w / f)), max(2, round(h / f))
+    small = cv2.cvtColor(
+        cv2.resize(img_bgr, (sw, sh), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2LAB
+    )
+    ab = small[:, :, 1:].astype(np.float32)
+    unknown = (
+        cv2.resize(
+            cv2.dilate(hole, np.ones((5, 5), np.uint8)), (sw, sh), interpolation=cv2.INTER_NEAREST
+        )
+        > 0
+    )
+    if unknown.all() or not unknown.any():
+        return cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)[:, :, 1:]
+    known = ~unknown
+    x = ab.copy()
+    x[unknown] = ab[known].mean(axis=0)
+    for _ in range(1500):
+        x = cv2.blur(x, (3, 3), borderType=cv2.BORDER_REPLICATE)
+        x[known] = ab[known]
+    big = cv2.resize(x, (w, h), interpolation=cv2.INTER_CUBIC)
+    return cv2.GaussianBlur(big, (0, 0), max(1.5, 3.0 / f))
+
+
+def _restore_grain(
+    orig: np.ndarray, repaired: np.ndarray, hole: np.ndarray, fg: np.ndarray | None
+) -> np.ndarray:
+    """Two-stage repair: keep the model's fill for colour and tone only, then put real skin texture back on top.
+
+    LaMa works on a 512 px copy of the area and scales the fill back up, so what it paints is smooth and looks
+    "painted". Like frequency separation in a retouching workflow, the fill is low-passed and fine grain with the
+    measured strength of the clean skin around the selection is added (per LAB channel).
+    """
+    h, w = hole.shape
+    lab_o = cv2.cvtColor(orig, cv2.COLOR_BGR2LAB).astype(np.float32)
+    lab_r = cv2.cvtColor(repaired, cv2.COLOR_BGR2LAB).astype(np.float32)
+    fine = lab_o - cv2.GaussianBlur(lab_o, (0, 0), 2.0)
+    m = hole > 0
+    k = int(np.clip(0.05 * max(h, w), 9, 61)) | 1
+    ker = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * k + 1, 2 * k + 1))
+    ring = (cv2.dilate(hole, ker) > 0) & ~(cv2.dilate(hole, np.ones((5, 5), np.uint8)) > 0)
+    if fg is not None and (ring & (fg > 0)).sum() >= 200:
+        ring &= fg > 0  # skin of the person only, when there is enough of it
+    if ring.sum() < 200:  # tiny ring: any clean pixel will do
+        ring = ~m
+    if ring.sum() < 50:
+        return repaired
+    sig = np.empty(3, np.float32)
+    for c in range(3):
+        v = fine[:, :, c][ring]
+        sig[c] = 1.4826 * np.median(np.abs(v - np.median(v)))
+    rng = np.random.default_rng(0)
+    noise = cv2.GaussianBlur(rng.standard_normal((h, w, 3)).astype(np.float32), (0, 0), 0.7)
+    noise /= np.maximum(noise.reshape(-1, 3).std(axis=0), 1e-6)
+    low = cv2.GaussianBlur(lab_r, (0, 0), 1.5)
+    # LaMa's own colour mottles over a big hole (grey/green/orange blotches): take the colour (a, b) from a smooth
+    # diffusion of the skin around the hole instead, and keep LaMa for the light and shade (L).
+    low[:, :, 1:] = _diffuse_colour(orig, hole)
+    textured = low + noise * sig
+    wt = np.clip(cv2.GaussianBlur(hole.astype(np.float32) / 255.0, (0, 0), 1.5), 0, 1)[:, :, None]
+    lab = lab_r * (1 - wt) + textured * wt
+    return cv2.cvtColor(np.clip(lab + 0.5, 0, 255).astype(np.uint8), cv2.COLOR_LAB2BGR)
 
 
 def _temporary_background(img_bgr: np.ndarray, fg: np.ndarray) -> np.ndarray:
@@ -402,16 +470,29 @@ def _temporary_background(img_bgr: np.ndarray, fg: np.ndarray) -> np.ndarray:
     This is the "temporary background removal": the inpainting model then sees only skin, so it can never pull a wall,
     curtain or highlight into the repair. The real backdrop is put back afterwards.
     """
-    bg = (fg == 0).astype(np.uint8)
-    if not bg.any() or bg.all():
+    # The matting mask is generous at the person's edge (the API even grows it): sample colour only from well inside it.
+    er = max(3, int(round(0.01 * max(fg.shape[:2]))))
+    inner = cv2.erode(
+        (fg > 0).astype(np.uint8),
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * er + 1, 2 * er + 1)),
+    )
+    person = (inner if inner.any() else (fg > 0)).astype(np.float32)
+    if person.all() or not person.any():
         return img_bgr.copy()
-    _, labels = cv2.distanceTransformWithLabels(bg, cv2.DIST_L2, 3, labelType=cv2.DIST_LABEL_PIXEL)
-    src = np.flatnonzero(bg.ravel() == 0)  # label k (1-based) = the k-th person pixel in scan order
-    flat = img_bgr.reshape(-1, img_bgr.shape[-1])
-    filled = flat[src[labels.ravel() - 1]].reshape(img_bgr.shape)
-    k = _odd(max(img_bgr.shape[:2]) * 0.03)
-    filled = cv2.GaussianBlur(filled, (k, k), 0)  # no nearest-pixel streaks
-    return np.where(bg[:, :, None] > 0, filled, img_bgr)
+    src = img_bgr.astype(np.float32) * person[:, :, None]
+    filled = np.zeros_like(src)
+    done = person > 0
+    # The person's average colour at the smallest scale that reaches each backdrop pixel: smooth, and always skin.
+    for sigma in (3, 6, 12, 24, 48, 96, 192, 384):
+        den = cv2.GaussianBlur(person, (0, 0), sigma)
+        num = cv2.GaussianBlur(src, (0, 0), sigma)
+        take = ~done & (den > 0.02)
+        filled[take] = num[take] / den[take][:, None]
+        done |= take
+        if done.all():
+            break
+    filled[~done] = src[person > 0].mean(axis=0)
+    return np.where(person[:, :, None] > 0, img_bgr, np.clip(filled + 0.5, 0, 255).astype(np.uint8))
 
 
 def remove_tattoo_lama(
@@ -422,7 +503,7 @@ def remove_tattoo_lama(
     foreground: np.ndarray | None = None,
     passes: int = LAMA_PASSES,
 ) -> tuple[np.ndarray, dict]:
-    """Remove the selection with AI object removal (LaMa, ``passes`` passes), with the backdrop temporarily removed.
+    """Remove the selection with AI object removal (LaMa, ``passes`` passes) plus real skin grain, with the backdrop temporarily removed.
 
     Only the selected part of the person is repainted; with ``foreground`` the backdrop is swapped for skin colour
     while the model runs and restored afterwards, so a highlighted or skin-like background cannot leak in.
@@ -450,6 +531,9 @@ def remove_tattoo_lama(
     work = sub if foreground is None else _temporary_background(sub, foreground[crop])
 
     repaired = LaMa.get().infer(work, hole, iterations=max(1, int(passes)))
+    repaired = _restore_grain(
+        work, repaired, hole, None if foreground is None else foreground[crop]
+    )
 
     w = np.clip(cv2.GaussianBlur(hole.astype(np.float32) / 255.0, (0, 0), 1.5), 0.0, 1.0)
     if foreground is not None:

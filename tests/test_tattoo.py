@@ -440,9 +440,13 @@ class TestLamaTattoo:
         out, info = T.remove_tattoo_lama(img, sel, foreground=arm, **kw)
         return img, sel, arm, out, info, stub
 
-    def test_runs_twenty_passes_and_hides_the_backdrop_from_the_model(self, monkeypatch):
+    def test_runs_the_passes_and_hides_the_backdrop_from_the_model(self, monkeypatch):
         img, _, arm, _, info, stub = self._run(monkeypatch)
-        assert stub.iterations == 20 and info["mode"] == "lama" and info["passes"] == 20
+        assert (
+            stub.iterations == T.LAMA_PASSES
+            and info["mode"] == "lama"
+            and info["passes"] == T.LAMA_PASSES
+        )
         # Where the model looked, the wall is gone: every backdrop pixel it saw is skin-coloured, not wall-blue.
         crop_arm = arm[: stub.seen.shape[0], : stub.seen.shape[1]]
         wall_seen = stub.seen[crop_arm == 0].astype(np.float32)
@@ -466,5 +470,24 @@ class TestLamaTattoo:
     def test_temporary_background_keeps_the_person_and_replaces_the_rest(self):
         img, _, _, arm = _arm_scene()
         tmp = T._temporary_background(img, arm)
-        assert np.array_equal(tmp[arm > 0], img[arm > 0])
+        core = cv2.erode(arm, np.ones((11, 11), np.uint8)) > 0  # the mask's edge is not trusted
+        assert np.array_equal(tmp[core], img[core])
         assert np.abs(tmp[arm == 0].astype(np.float32) - WALL).mean() > 40
+        assert (
+            np.abs(tmp[arm == 0].astype(np.float32) - SKIN).mean() < 30
+        )  # skin-coloured, not wall-coloured
+        assert np.abs(tmp[:20].astype(np.float32) - SKIN).mean() < 30  # also far from the person
+
+    def test_the_fill_gets_the_grain_of_the_skin_around_it(self, monkeypatch):
+        img, sel, arm, out, _, _ = self._run(monkeypatch)  # the stub's fill is perfectly flat
+        lab = cv2.cvtColor(out, cv2.COLOR_BGR2LAB).astype(np.float32)[:, :, 0]
+        fine = lab - cv2.GaussianBlur(lab, (0, 0), 2.0)
+        inside = (
+            (cv2.erode(sel, np.ones((9, 9), np.uint8)) > 0)
+            & (arm > 0)
+            & (np.arange(lab.shape[0])[:, None] > 80)
+            & (np.arange(lab.shape[0])[:, None] < 160)
+        )
+        outside = (arm > 0) & (cv2.dilate(sel, np.ones((9, 9), np.uint8)) == 0)
+        ratio = fine[inside].std() / fine[outside].std()
+        assert 0.5 < ratio < 1.6, ratio
