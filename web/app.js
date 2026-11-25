@@ -1489,7 +1489,7 @@ async function processTattoo() {
   formData.append("mask", maskBlob, "mask.png");
   formData.append("strength", String(strength));
   formData.append("grow", String(grow));
-  setStatus(grow >= 0.85 ? "Removing the tattoo (high sensitivity looks three times)… this can take 20–30 s." : "Removing the tattoo… this can take 10 s or more.");
+  setStatus("Removing the tattoo…");
 
   let resp;
   try {
@@ -1515,15 +1515,10 @@ async function processTattoo() {
   renderOutputs(data);
   const secs = (data.elapsed_seconds ?? 0).toFixed(1);
   const msg = {
-    detected: `Tattoo removed (${data.ink_pct}% of the selection) in ${secs}s`,
-    relaxed: `Removed with a looser match (${data.ink_pct}% of the selection): the tattoo was hard to tell from skin. Raise “Catch faint ink” or select it more closely if it missed some.`,
-    selection: "Couldn't tell the tattoo from the skin, so the whole selection was repainted. Select just the tattoo (tap it) for a cleaner result.",
-    clean: "No tattoo colours found in that selection: it looks like plain skin, so nothing was changed.",
-    unsure: "Couldn't find tattoo ink there: the selection mixes skin with other things (hair, background), so nothing was changed. Tap the tattoo itself, or paint closer around it.",
-    noskin: "That selection isn't on skin (it looks like background or clothing), so nothing was changed. Select the tattoo itself.",
-    none: "Nothing to remove (the amount is 0).",
+    detected: `Tattoo removed (${data.ink_pct}% of the painted area) in ${secs}s. If some is left, raise the sensitivity or paint a little closer around it.`,
+    none: "Found nothing dark enough to remove in that area. Raise the sensitivity, or paint over the tattoo itself.",
   }[data.mode] || `Tattoo removed in ${secs}s`;
-  setStatus(msg, ["selection", "clean", "noskin", "unsure"].includes(data.mode) ? "" : "success");
+  setStatus(msg, data.mode === "none" ? "" : "success");
   state.processing = false;
   updateProcessButton();
 }

@@ -259,31 +259,23 @@ Risks and limits:
 
 ## Backlog (not scheduled)
 
-- [x] **Tattoo removal** (1.16.0, reworked 1.18.0): *Remove Tattoo* group; tap (MobileSAM) or paint a selection ->
-      `POST /api/v1/tattoo`. The selection is only the *search area*: the dominant local skin colour is found (densest
-      colour peak, brightness weighted half so limb shading is followed), then ink = selected pixels that differ from
-      the local skin, are darker or more vivid than it, and have skin within reach in at least 6 of 8 directions (so a
-      loose mask running off the arm leaves the background untouched). Only those pixels are inpainted (LaMa, TELEA
-      fallback), grain is re-added at the skin's measured level, edges are soft, "amount removed" fades instead of
-      erasing, "catch faint ink" is more eager. Measured on a real photo with a drawn tattoo: tight/tapped selection
-      removes ~80% of the ink and changes nothing else; a loose selection that also covers long hair or a skin-coloured
-      wall can repaint some of that (the skin test cannot tell hair from ink by colour alone). Ideas: a tattoo-aware
-      model, per-component confirmation (show the detected ink and let the user veto), hair-aware masks.
-      1.18.3: "Catch faint ink" now tightens every test together (skin threshold, darker/vivid margin, directions with
-      skin), widens the edge, and at high values re-checks the cleaned result up to 3 times (slower, ~25 s); the skin
-      model spreads in short steps so sunlit highlights count as skin; big tattoos get their solid interior removed by
-      spreading through connected pixels of the ink's own colour. On the test photo, a tight selection catches 96.5% at
-      maximum, a solid patch 100%.
-      1.19.2: the replacement is bounded to flesh tones (`bound_to_skin`: fill pixels that stray from the local skin
-      colour, estimated from clean skin pixels only, are replaced by it), and a loose selection can no longer drag the
-      background in: ink must lie on the straight colour line between the local skin and the tattoo's own dominant colour
-      (a red curtain, lips, teeth, a dark jacket are off it), only skin/ink pixels are ever changed, the selection must
-      actually be on skin (else "that isn't on skin"), the whole-selection fallback only runs for a one-colour patch
-      (else "unsure", nothing changed), the person's face colour anchors what counts as skin, and the parser protects
-      eyes, brows, mouth and hair on faces. Limits: ink that overlaps an eye or the mouth is treated as ink there; a
-      skin-coloured background (a pink wall) cannot be told from skin by colour alone.
-      Tried and dropped: filling from the ring around the selection (bled background in), a global tone-matching step
-      (pulled in hair colours), 'holes fully enclosed by skin' (too strict on JPEG noise).
+- [x] **Tattoo removal** (1.16.0, rewritten 1.19.3 after three over-engineered versions): *Remove Tattoo* group; tap
+      (MobileSAM) or paint a selection -> `POST /api/v1/tattoo`. The painted area is only where to look. Ink = selected
+      pixels darker than the local skin by a margin (the sensitivity slider; 40 L units at 0 down to 6 at 1, never
+      below ~3x the photo's grain) and not strongly coloured (so a saturated blue wall or red curtain is not "ink").
+      The skin reference is built once per request, independent of the slider, so raising the slider can only add ink
+      (a test enforces it; an earlier version got this backwards). The replacement is the flesh colour next to each
+      ink pixel, taken only from skin pixels (never background, hair or ink) and filled inward from each patch's edge
+      so it follows the local shading; then skin grain is added, edges are soft, and a second pass catches faint halo.
+      The skin colour is chosen among skin-hued pixels (generous YCrCb) near the selection: choosing the most common
+      colour instead locked onto a flat wall in loose selections, which was the real cause of the 'bleeding'.
+      Lessons: every geometric safeguard I added (skin on 5 of 8 sides, enclosed holes, colour lines, skin gates) made it
+      silently do nothing on real photos where the tattoo sits at the edge of the skin. Measured on a real photo with a
+      drawn tattoo: colour error against the untattooed original 34.5 -> ~14, the letters are gone, a faint outline
+      remains where ink overlapped hair. Limits: dark neutral backgrounds or hair inside the painted area are repainted
+      too (paint close to the tattoo); a skin-coloured wall cannot be told from skin.
+      Ideas: show the detected ink and let the user veto, inpainting for complex backgrounds, parser protection for
+      hair on faces (it mislabels dark ink as hair, so it needs care).
 
 ## Cross-cutting rules
 

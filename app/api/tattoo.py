@@ -13,47 +13,9 @@ from app.api._common import read_image_bytes
 from app.exceptions import DecodeError, ValidationError
 from app.monitoring import image_process_seconds, image_process_total
 from app.pipeline.io import decode_to_bgr, encode_png
-from app.pipeline.tattoo import face_skin_hint, remove_tattoo_info
+from app.pipeline.tattoo import remove_tattoo_info
 
 router = APIRouter()
-
-
-def _face_context(img):
-    """From the (largest) face: the person's skin colour, and a mask of hair/hat/clothing to leave alone.
-
-    Both are optional: without the face models the tool still works, just with less protection."""
-    try:
-        from app.models.face import get_face_engine
-
-        engine = get_face_engine()
-        faces = engine.detect(img)
-    except Exception:
-        return None, None
-    if not faces:
-        return None, None
-    big = max(faces, key=lambda f: f.box[2] * f.box[3])
-    hint = face_skin_hint(img, big.kps)
-    try:
-        import cv2
-        import numpy as np
-
-        from app.pipeline import face as geo
-
-        size = 640
-        tpl = geo.head_template(size)
-        crop, m = geo.align_crop(img, big.kps, tpl, size)
-        labels = cv2.resize(
-            engine.parse(cv2.resize(crop, (512, 512), interpolation=cv2.INTER_AREA)),
-            (size, size),
-            interpolation=cv2.INTER_NEAREST,
-        )
-        covered = np.isin(labels, (2, 3, 4, 5, 6, 11, 12, 13, 17, 18)).astype(
-            np.float32
-        )  # brows, eyes, glasses, mouth, lips, hair, hat
-        protect = (geo.warp_mask_to_image(covered, m, img.shape) > 0.5).astype(np.uint8)
-    except Exception:
-        protect = None
-    return hint, protect
 
 
 @router.post("/api/v1/tattoo")
@@ -61,13 +23,13 @@ async def tattoo(
     file: UploadFile = File(...),
     mask: UploadFile = File(...),
     strength: float = Form(default=1.0),
-    grow: float = Form(default=0.3),
+    grow: float = Form(default=0.5),
     algorithm: str = Form(default="lama"),
 ) -> dict:
-    """Remove the tattoo inside ``mask`` (white = search here; it may overshoot onto the background).
+    """Remove the dark tattoo ink inside ``mask`` (white = search here; it may overshoot onto the background).
 
-    Only tattoo-coloured pixels that are surrounded by skin are replaced, with the colour of the skin around them.
-    ``strength`` 0..1 (1 = gone, less = faded), ``grow`` 0..1 (higher catches fainter ink and outlines).
+    Pixels much darker than the skin around them are replaced with the flesh tone next to them. ``strength`` 0..1
+    (1 = gone, less = faded), ``grow`` 0..1 is the sensitivity (higher catches fainter ink). ``algorithm`` is ignored.
     """
     try:
         img = decode_to_bgr(await read_image_bytes(file))
@@ -89,7 +51,6 @@ async def tattoo(
             status_code=422, detail="select the tattoo first (tap it or paint over it)"
         )
 
-    hint, protect = _face_context(img)
     started = time.perf_counter()
     try:
         result, info = remove_tattoo_info(
