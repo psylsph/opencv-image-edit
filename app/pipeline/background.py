@@ -81,7 +81,20 @@ def apply_background_remove(
     alpha = cv2.GaussianBlur(mask, (3, 3), 0)
     alpha = np.clip(alpha, 0.0, 1.0)
     alpha_u8 = (alpha * 255).astype(np.uint8)
-    return np.dstack([img_bgr, alpha_u8])
+    return clear_transparent_colour(np.dstack([img_bgr, alpha_u8]))
+
+
+def clear_transparent_colour(bgra: np.ndarray) -> np.ndarray:
+    """Blank the colour of fully transparent pixels.
+
+    A transparent pixel still carries RGB, which here is the *old background*. Anything that ignores the alpha channel
+    (a viewer, a converter, an app that flattens the image) then shows the old background instead of the cut-out. With
+    the colour cleared such a viewer shows plain black, and edge pixels do not pick up a halo of the old backdrop.
+    Partly transparent edge pixels keep their colour.
+    """
+    out = bgra.copy()
+    out[out[:, :, 3] == 0, :3] = 0
+    return out
 
 
 def background_paint_mask_to_foreground_alpha(

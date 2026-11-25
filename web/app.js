@@ -1575,6 +1575,35 @@ async function processBlurArea() {
   updateProcessButton();
 }
 
+/** Turn the result into a downloadable PNG (and a share action where the browser has one). */
+let saveUrl = null;
+async function prepareSave(dataUrl) {
+  const btn = $("#save-btn"), share = $("#share-btn"), hint = $("#save-hint");
+  if (!btn) return;
+  if (saveUrl) { URL.revokeObjectURL(saveUrl); saveUrl = null; }
+  if (!dataUrl) { btn.hidden = true; share.hidden = true; hint.hidden = true; return; }
+  try {
+    const blob = await (await fetch(dataUrl)).blob();   // the server's PNG, alpha included, byte for byte
+    saveUrl = URL.createObjectURL(blob);
+    const base = ((state.file && state.file.name) || "photo").replace(/\.[^.]+$/, "");
+    const name = `${base}-edited.png`;
+    btn.href = saveUrl;
+    btn.download = name;
+    btn.hidden = false;
+    hint.hidden = false;
+    const file = new File([blob], name, { type: "image/png" });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      share.hidden = false;
+      share.onclick = () => navigator.share({ files: [file], title: name }).catch(() => {});
+    } else {
+      share.hidden = true;
+    }
+  } catch (err) {
+    console.warn("could not prepare the download:", err);
+    btn.hidden = true; share.hidden = true; hint.hidden = true;
+  }
+}
+
 function renderOutputs(data) {
   $("#output-section").hidden = false;
   const map = {
@@ -1628,6 +1657,7 @@ function renderOutputs(data) {
 
   setResultAvailable(true);
   setView("result");
+  prepareSave(data.final);
 
   // Output meta: bytes / format
   const meta = $("#output-meta");

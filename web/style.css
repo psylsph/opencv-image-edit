@@ -801,3 +801,17 @@ body[data-view="edit"] .output-section { display: none; }
 .face-overlay .ring { fill: rgba(255, 255, 255, 0.04); stroke: #fff; stroke-width: 3; vector-effect: non-scaling-stroke; pointer-events: all; cursor: pointer; }
 .face-overlay .ring.on { stroke: var(--accent); stroke-width: 5; fill: rgba(110, 140, 255, 0.18); }
 .face-overlay text { fill: #fff; font: 700 16px system-ui, sans-serif; paint-order: stroke; stroke: rgba(0, 0, 0, 0.6); stroke-width: 3px; pointer-events: none; text-anchor: middle; }
+
+/* Result picture on a checkerboard, so transparent areas (Background -> Remove) are visible as such */
+#out-final {
+  background-color: #cfcfcf;
+  background-image:
+    linear-gradient(45deg, #9a9a9a 25%, transparent 25%, transparent 75%, #9a9a9a 75%),
+    linear-gradient(45deg, #9a9a9a 25%, transparent 25%, transparent 75%, #9a9a9a 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 10px 10px;
+}
+.save-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+.save-row .btn { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+.save-row [hidden] { display: none; }
+.save-hint { margin: 8px 0 0; font-size: 13px; color: var(--muted, #9aa3b2); line-height: 1.4; }

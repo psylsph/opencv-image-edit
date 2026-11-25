@@ -18,6 +18,27 @@ from app.pipeline.tattoo import remove_tattoo_info
 router = APIRouter()
 
 
+def _person_mask(img):
+    """The person (foreground) from the matting model, as a 0/1 mask, or None if the model is unavailable.
+
+    Used to keep the tattoo tool off the backdrop: however skin-like a wall or curtain is, it is never sampled or painted.
+    """
+    try:
+        from app.models.matting import get_matting_model
+
+        alpha = get_matting_model("u2netp").predict(img)
+    except Exception:  # no model, or it failed: the tool still works, without the extra protection
+        return None
+    fg = (alpha > 0.4).astype(np.uint8)
+    if (
+        fg.mean() < 0.02
+    ):  # the model found no subject at all: do not let that blank out the whole photo
+        return None
+    return cv2.dilate(
+        fg, np.ones((3, 3), np.uint8), iterations=2
+    )  # keep a little margin at the person's edge
+
+
 @router.post("/api/v1/tattoo")
 async def tattoo(
     file: UploadFile = File(...),
@@ -51,10 +72,11 @@ async def tattoo(
             status_code=422, detail="select the tattoo first (tap it or paint over it)"
         )
 
+    foreground = _person_mask(img)
     started = time.perf_counter()
     try:
         result, info = remove_tattoo_info(
-            img, mask_img, strength=strength, grow=grow, algorithm=algorithm
+            img, mask_img, strength=strength, grow=grow, algorithm=algorithm, foreground=foreground
         )
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.message) from exc

@@ -138,16 +138,19 @@ def test_apply_background_remove_preserves_foreground():
     assert np.array_equal(rgb_out[30, 60], rgb_in[30, 60])
 
 
-def test_apply_background_remove_preserves_input_rgb_outside_fg():
-    """Where mask=0, RGB should be preserved (transparency is what changes)."""
+def test_apply_background_remove_keeps_the_subject_and_blanks_the_removed_background():
+    """The subject keeps its colour; the removed background is fully transparent *and* carries no colour, so a viewer
+    that ignores alpha cannot show the old background (it used to keep the original RGB under alpha 0)."""
     img = _bgr(100, 80)
     mask = np.zeros((80, 100), dtype=np.float32)
     mask[20:60, 30:70] = 1.0
     out = apply_background_remove(img, mask)
     rgb_out = out[:, :, :3]
-    # Outside the FG rectangle
-    assert np.array_equal(rgb_out[5, 5], img[5, 5])
-    assert np.array_equal(rgb_out[70, 90], img[70, 90])
+    assert np.array_equal(rgb_out[40, 50], img[40, 50])  # inside the foreground: unchanged
+    assert out[5, 5, 3] == 0 and out[70, 90, 3] == 0  # outside: transparent...
+    assert (
+        not rgb_out[5, 5].any() and not rgb_out[70, 90].any()
+    )  # ...and no old-background colour left
 
 
 # ---------------------------------------------------------------------------
@@ -482,3 +485,61 @@ class TestDefringe:
         clean = apply_background_replace(img, mask, color="#0000ff", defringe=1.0)
         # Over a blue backdrop the green halo is what gives the edge away; it should shrink.
         assert clean[:, 40, 1].mean() < plain[:, 40, 1].mean() - 20
+
+
+class TestTransparentPixelsCarryNoOldBackground:
+    def test_fully_transparent_pixels_have_no_colour(self):
+        from app.pipeline.background import apply_background_remove
+
+        img = np.full((20, 20, 3), (10, 200, 30), np.uint8)  # a bright green "old background"
+        mask = np.zeros((20, 20), np.float32)
+        mask[:, 10:] = 1.0  # right half kept
+        out = apply_background_remove(img, mask)
+        gone = out[:, :, 3] == 0
+        assert gone.any()
+        assert (
+            out[gone][:, :3] == 0
+        ).all()  # no trace of the old background under the transparency
+
+    def test_kept_pixels_and_soft_edges_keep_their_colour(self):
+        from app.pipeline.background import apply_background_remove
+
+        img = np.full((20, 20, 3), (10, 200, 30), np.uint8)
+        mask = np.zeros((20, 20), np.float32)
+        mask[:, 10:] = 1.0
+        out = apply_background_remove(img, mask)
+        assert (out[:, 15:, :3] == (10, 200, 30)).all() and (out[:, 15:, 3] == 255).all()
+        edge = (out[:, :, 3] > 0) & (out[:, :, 3] < 255)
+        assert edge.any() and (out[edge][:, :3] == (10, 200, 30)).all()
+
+    def test_the_process_endpoint_returns_a_png_with_clean_transparency(self, test_client):
+        import base64
+        import json
+
+        import cv2
+
+        class Stub:
+            def predict(self, im):
+                m = np.zeros(im.shape[:2], np.float32)
+                m[:, im.shape[1] // 2 :] = 1.0
+                return m
+
+        import app.pipeline as pipeline
+
+        original = pipeline.get_matting_model
+        pipeline.get_matting_model = lambda name: Stub()
+        try:
+            img = np.full((40, 60, 3), (10, 200, 30), np.uint8)
+            r = test_client.post(
+                "/api/v1/process",
+                files={"file": ("a.png", cv2.imencode(".png", img)[1].tobytes(), "image/png")},
+                data={"settings": json.dumps({"background": {"enabled": True, "mode": "remove"}})},
+            )
+        finally:
+            pipeline.get_matting_model = original
+        assert r.status_code == 200
+        png = base64.b64decode(r.json()["final"].split(",", 1)[1])
+        out = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_UNCHANGED)
+        assert out.shape[2] == 4
+        gone = out[:, :, 3] == 0
+        assert gone.any() and (out[gone][:, :3] == 0).all()

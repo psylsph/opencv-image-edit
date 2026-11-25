@@ -136,13 +136,18 @@ def _dominant_colour(px: np.ndarray) -> tuple[np.ndarray, float]:
 class _Prep:
     """Everything about the selection that does not depend on the sensitivity."""
 
-    def __init__(self, img_bgr: np.ndarray, mask: np.ndarray) -> None:
+    def __init__(
+        self, img_bgr: np.ndarray, mask: np.ndarray, foreground: np.ndarray | None = None
+    ) -> None:
         self.r = _radius(img_bgr.shape)
         k = np.ones((3, 3), np.uint8)
+        # `foreground` (from background matting) is the person. Everything outside it is off limits: not searched for
+        # ink, not sampled for skin colour, never repainted. So no backdrop colour, however skin-like, can get in.
+        self.fg = np.ones(img_bgr.shape[:2], bool) if foreground is None else (foreground > 0)
         self.lab = lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
         self.luma = luma = lab[:, :, 0]
-        self.binary = binary = (mask > 0).astype(np.uint8)
-        roi = cv2.dilate(binary, k, iterations=5 * self.r) > 0
+        self.binary = binary = ((mask > 0) & self.fg).astype(np.uint8)
+        roi = (cv2.dilate(binary, k, iterations=5 * self.r) > 0) & self.fg
         if not roi.any() or roi.all() and not (binary == 0).any():
             raise ValidationError("the selection covers the whole picture")
         # The skin colour comes from what is actually around the tattoo, not from a generic skin-tone range (shaded or
@@ -185,7 +190,7 @@ class _Prep:
 
 
 def find_ink(
-    img_bgr: np.ndarray, mask: np.ndarray, sensitivity: float
+    img_bgr: np.ndarray, mask: np.ndarray, sensitivity: float, foreground: np.ndarray | None = None
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Returns ``(ink, skin, lab)``: 0/1 masks of the ink pixels and of the clean skin, plus the LAB image.
 
@@ -193,7 +198,7 @@ def find_ink(
     photo's grain) that are not strongly coloured. The skin reference does not depend on the sensitivity, so raising it
     can only add ink.
     """
-    prep = _Prep(img_bgr, mask)
+    prep = _Prep(img_bgr, mask, foreground)
     s = float(np.clip(sensitivity, 0.0, 1.0))
     margin = max(margin_for(s), GRAIN_FLOOR * prep.grain)
     dark = (prep.ref_luma - prep.luma) > margin
@@ -208,7 +213,7 @@ def find_ink(
     # Clean skin for the fill: every skin-looking pixel near the selection (shaded ones included) except anything even
     # slightly darker than the skin around it, so the ink's faint halo does not tint the replacement.
     faint = (prep.ref_luma - prep.luma) > 8.0
-    clean = prep.pool & ~faint
+    clean = prep.pool & ~faint & prep.fg
     return ink.astype(np.uint8), clean.astype(np.uint8), prep.lab
 
 
@@ -239,9 +244,12 @@ def remove_tattoo_info(
     strength: float = 1.0,
     grow: float = 0.5,
     algorithm: str = "",  # accepted and ignored: older clients still send it
+    foreground: np.ndarray | None = None,
 ) -> tuple[np.ndarray, dict]:
     """Remove the dark tattoo ink inside ``mask`` (uint8, non-zero = search here).
 
+    ``foreground`` (optional, non-zero = the person, e.g. from background matting) keeps everything else out of bounds:
+    the skin colour is sampled only from the person and only the person's pixels are ever repainted.
     ``grow`` is the sensitivity (0..1): the higher, the fainter the ink that is caught. ``strength`` (0..1) fades
     instead of erasing. Returns ``(image, info)``; ``info["mode"]`` is ``detected`` or ``none`` (no ink darker than the
     margin in the selection). ``info["ink_pct"]`` is the share of the selection that was repainted.
@@ -254,6 +262,8 @@ def remove_tattoo_info(
     if img_bgr.ndim == 3 and img_bgr.shape[2] == 4:
         img_bgr = img_bgr[:, :, :3]
     binary = (mask > 0).astype(np.uint8)
+    if foreground is not None:
+        binary = binary & (foreground > 0).astype(np.uint8)  # only the person is searched
     if not binary.any() or strength <= 0:
         return img_bgr.copy(), {"mode": "none", "ink_pct": 0.0, "passes": 0}
 
@@ -268,7 +278,7 @@ def remove_tattoo_info(
     for _ in range(
         2
     ):  # a second look catches the faint halo that only shows once the dark core is gone
-        ink, clean, lab = find_ink(current, mask, grow)
+        ink, clean, lab = find_ink(current, mask, grow, foreground)
         if int(ink.sum()) < (enough if passes == 0 else max(10, enough // 4)):
             break
         passes += 1
@@ -284,6 +294,8 @@ def remove_tattoo_info(
             cv2.GaussianBlur(ink.astype(np.float32), (0, 0), max(0.8, r / 3.0)) * 1.5, 0.0, 1.0
         )
         soft *= binary.astype(np.float32)  # never outside the selection
+        if foreground is not None:
+            soft *= (foreground > 0).astype(np.float32)  # and never on the backdrop
         filled = add_skin_texture(filled, current, soft, clean.astype(np.uint8))
         out_f = (
             current.astype(np.float32) * (1.0 - soft[:, :, None])

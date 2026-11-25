@@ -12,7 +12,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="style.css?v=25" />
+  <link rel="stylesheet" href="style.css?v=26" />
 </head>
 <body>
   <main class="app">
@@ -403,6 +403,11 @@
       <div class="output-panes">
         <div class="output-pane active" data-pane="final">
           <img id="out-final" alt="Processed result" />
+          <div class="save-row">
+            <a id="save-btn" class="btn btn-primary" download="edited.png" hidden>⬇️ Save PNG</a>
+            <button id="share-btn" class="btn btn-secondary" type="button" hidden>📤 Share</button>
+          </div>
+          <p class="save-hint" id="save-hint" hidden>Saved as a PNG file so transparency is kept. Long-pressing the picture can flatten it; use this button.</p>
         </div>
         <div class="output-pane" data-pane="before_after">
           <img id="out-before_after" alt="Before/after comparison" />
@@ -443,6 +448,6 @@
     </button>
   </nav>
 
-  <script type="module" src="app.js?v=50"></script>
+  <script type="module" src="app.js?v=51"></script>
 </body>
 </html>

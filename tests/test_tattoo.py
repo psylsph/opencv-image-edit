@@ -224,6 +224,70 @@ class TestRemoveTattoo:
         assert _lab_dist(out[inked > 0].mean(0), dark) < 20
 
 
+class TestPersonMask:
+    """With the person from background matting, the backdrop is off limits however skin-like it is."""
+
+    @staticmethod
+    def _scene():
+        # An arm in front of a *skin-coloured* wall with a dark band (a shadow) across it, plus a dark tattoo on the arm.
+        rng = np.random.default_rng(5)
+        h, w = 240, 360
+        img = np.empty((h, w, 3), np.float32)
+        img[:] = (150, 170, 220)  # a lighter, pinker "skin-like" wall (BGR)
+        arm = np.zeros((h, w), np.uint8)
+        arm[80:170, :] = 1
+        skin = np.array([110, 140, 195], np.float32)[None, None, :] + rng.normal(0, 2.5, (h, w, 1))
+        img = np.where(arm[..., None] > 0, skin, img)
+        img[20:50, :] = (70, 80, 90)  # a dark neutral shadow band on the wall, above the arm
+        ink = np.zeros((h, w), np.uint8)
+        cv2.ellipse(ink, (180, 125), (40, 14), 0, 0, 360, 255, -1)
+        img[ink > 0] = (45, 42, 40)
+        sel = np.zeros((h, w), np.uint8)
+        sel[10:180, 100:270] = 1  # covers the shadow band, the wall and the arm with the tattoo
+        return np.clip(img, 0, 255).astype(np.uint8), sel, ink > 0, arm
+
+    def test_without_the_person_mask_a_dark_neutral_backdrop_in_the_selection_counts_as_ink(self):
+        img, sel, _, arm = self._scene()
+        out = T.remove_tattoo(img, sel)
+        band = np.zeros(img.shape[:2], bool)
+        band[20:50, 100:270] = True
+        assert not np.array_equal(
+            out[band], img[band]
+        )  # the documented limit: dark neutral stuff in the area is painted
+
+    def test_with_the_person_mask_the_backdrop_is_never_touched(self):
+        img, sel, ink, arm = self._scene()
+        out = T.remove_tattoo(img, sel, foreground=arm)
+        off_person = (arm == 0) & (sel > 0)
+        assert np.array_equal(
+            out[off_person], img[off_person]
+        )  # not a single backdrop pixel changed
+
+    def test_with_the_person_mask_the_tattoo_is_still_removed_with_skin_from_the_arm(self):
+        img, sel, ink, arm = self._scene()
+        out = T.remove_tattoo(img, sel, foreground=arm)
+        skin = np.array([110, 140, 195], np.float32)
+        assert (
+            _lab_dist(out[ink].mean(0), skin) < 12
+        )  # the arm's skin colour, not the pinker wall's
+
+    def test_the_skin_colour_is_never_sampled_from_the_backdrop(self):
+        # The wall here is the most common colour in the selection and also skin-toned. Without the mask it can win;
+        # with it, the fill must match the arm, not the wall.
+        img, sel, ink, arm = self._scene()
+        with_mask = T.remove_tattoo(img, sel, foreground=arm)
+        wall = np.array([150, 170, 220], np.float32)
+        arm_skin = np.array([110, 140, 195], np.float32)
+        d_arm = _lab_dist(with_mask[ink].mean(0), arm_skin)
+        d_wall = _lab_dist(with_mask[ink].mean(0), wall)
+        assert d_arm < d_wall
+
+    def test_an_empty_person_mask_inside_the_selection_changes_nothing(self):
+        img, sel, _, _ = self._scene()
+        out, info = T.remove_tattoo_info(img, sel, foreground=np.zeros(img.shape[:2], np.uint8))
+        assert info["mode"] == "none" and np.array_equal(out, img)
+
+
 class TestHelpers:
     def test_local_skin_uses_only_skin_pixels(self):
         lab = np.zeros((60, 60, 3), np.float32)

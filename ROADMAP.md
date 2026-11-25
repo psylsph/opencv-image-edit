@@ -257,6 +257,14 @@ Risks and limits:
   The swapper works at 128 px, so very large faces rely on the restorer for detail.
 - **Cost:** the models add ~1.1 GB to the image and volume; the 180 s idle timeout frees their RAM.
 
+## Saving results (1.19.4)
+
+- Background -> Remove used to leave the *old background's colour* under the transparent pixels (alpha 0), so any viewer,
+  converter or app that ignores alpha showed the old background. The colour under fully transparent pixels is now cleared
+  (`clear_transparent_colour`), and the Result view has a **Save PNG** button that downloads the server's PNG byte for
+  byte (plus **Share** where the browser supports sharing files) and a checkerboard behind the picture. Long-pressing the
+  picture still works but can flatten it, and in the Edit view it saves the original photo, not the preview.
+
 ## Backlog (not scheduled)
 
 - [x] **Tattoo removal** (1.16.0, rewritten 1.19.3 after three over-engineered versions): *Remove Tattoo* group; tap
@@ -274,6 +282,10 @@ Risks and limits:
       drawn tattoo: colour error against the untattooed original 34.5 -> ~14, the letters are gone, a faint outline
       remains where ink overlapped hair. Limits: dark neutral backgrounds or hair inside the painted area are repainted
       too (paint close to the tattoo); a skin-coloured wall cannot be told from skin.
+      1.19.4: the matting model runs under the covers (u2netp, ~0.5 s) and its person mask is a hard boundary: ink is only
+      searched on the person, the skin colour is only sampled from the person, and only the person's pixels are ever
+      repainted, so no backdrop colour (however skin-like) can bleed in; measured on a real photo, 4583 backdrop pixels
+      were repainted without the mask and 0 with it. Without the matting model the tool still works, unprotected.
       Ideas: show the detected ink and let the user veto, inpainting for complex backgrounds, parser protection for
       hair on faces (it mislabels dark ink as hair, so it needs care).
 
