@@ -297,6 +297,20 @@ Risks and limits:
       tight selection (7% with a sloppy mask that includes eyelashes), signed L error at the tattoo about 0.
       Ideas: show the detected ink and let the user veto, inpainting for complex backgrounds, parser protection for
       hair on faces (it mislabels dark ink as hair, so it needs care).
+      1.19.6 (rewrite, big faded tattoos): a real photo of a large, soft, grey-green shoulder tattoo on pale skin came out as
+      a patchwork (flat colour regions with seams, the faint half left in place). Cause: every earlier version looked for
+      ink "much darker than the skin around it" and filled from the surrounding skin, which fails when the tattoo is
+      bigger than the skin around it and is only ~8 colour units (LAB a/b) from skin and barely darker than a shadow.
+      Now detection is by colour: a skin model (LAB a, b as a function of L, quadratic, learned from clean skin in a ring
+      around the selection) says what skin looks like at each brightness, so shadows stay on the curve and ink falls off
+      it towards grey; score = how much less warm than skin of the same brightness, in units of the skin's own noise (on
+      the photo: clean skin ~0 +- 1.7, ink median 12). Repair: skin chroma restored from the curve, darkness removed in
+      proportion to the score (strength read off the picture), what remains of the drawing flattened into the limb's
+      shading with a grey-scale closing envelope (computed on a reduced copy), then grain. No copied patches, so no
+      seams. Islands of bare skin inside the drawing are blended in. Near-black ink (below any clean skin) is told by
+      darkness alone. Works without the person mask too: the pale backdrop is excluded by brightness (ink is never
+      lighter than lit skin) and strong colour. Limit: a ring of clean skin around the tattoo is needed (a selection that
+      covers all the skin falls back to skin elsewhere in the picture; a grey-scale photo has no colour cast to find).
 
 ## Cross-cutting rules
 

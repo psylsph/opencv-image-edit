@@ -1516,7 +1516,7 @@ async function processTattoo() {
   const secs = (data.elapsed_seconds ?? 0).toFixed(1);
   const msg = {
     detected: `Tattoo removed (${data.ink_pct}% of the painted area) in ${secs}s. If some is left, raise the sensitivity or paint a little closer around it.`,
-    none: "Found nothing dark enough to remove in that area. Raise the sensitivity, or paint over the tattoo itself.",
+    none: "Found no tattoo ink in that area. Raise the sensitivity, or paint over the tattoo itself.",
   }[data.mode] || `Tattoo removed in ${secs}s`;
   setStatus(msg, data.mode === "none" ? "" : "success");
   state.processing = false;

@@ -47,46 +47,46 @@ def _lab_dist(a, b):
 
 
 class TestSensitivity:
-    def test_margin_shrinks_as_sensitivity_rises(self):
-        ms = [T.margin_for(s) for s in (0.0, 0.25, 0.5, 0.75, 1.0)]
-        assert ms == sorted(ms, reverse=True) and ms[0] == T.MARGIN_AT_0 and ms[-1] == T.MARGIN_AT_1
+    def test_onset_falls_as_sensitivity_rises(self):
+        on = [T.onset_for(s, 2.0) for s in (0.0, 0.25, 0.5, 0.75, 1.0)]
+        assert on == sorted(on, reverse=True) and on[-1] >= T.ONSET_FLOOR
 
     def test_more_sensitivity_never_finds_less(self):
         # The slider must go the way its label says: higher = catches fainter ink = at least as much ink.
-        img, sel, _, _ = _arm_scene(ink_alpha=0.6)
-        areas = [int(T.find_ink(img, sel, s)[0].sum()) for s in (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)]
+        img, sel, _, _ = _arm_scene(ink_alpha=0.2)
+        areas = [float(T.find_ink(img, sel, s)[0].sum()) for s in (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)]
         assert areas == sorted(areas), areas
 
     def test_faint_ink_needs_a_higher_setting(self):
         img, sel, inked, _ = _arm_scene(
-            ink_colour=(150, 135, 135), ink_alpha=1.0
-        )  # a faded blue-grey ink: only a little darker than the skin
+            ink_alpha=0.2
+        )  # a faded tattoo: only a little off the skin colour
         low = T.find_ink(img, sel, 0.0)[0]
         high = T.find_ink(img, sel, 1.0)[0]
-        assert (high & inked).sum() > 5 * max((low & inked).sum(), 1)
+        assert (high * inked).sum() > 3 * max((low * inked).sum(), 1.0)
 
     def test_more_sensitivity_removes_more_of_a_faint_tattoo(self):
-        img, sel, inked, _ = _arm_scene(ink_colour=(150, 135, 135))
+        img, sel, inked, _ = _arm_scene(ink_alpha=0.2)
         m = inked > 0
 
         def left(s):
             out = T.remove_tattoo(img, sel, grow=s)
             return _lab_dist(out[m].mean(0), SKIN * 0.93)
 
-        assert left(1.0) <= left(0.5) <= left(0.0) + 1e-6
+        assert left(1.0) <= left(0.5) + 1e-6 and left(0.5) < 0.6 * left(0.0)
 
 
 class TestFindInk:
-    def test_finds_the_dark_ink(self):
+    def test_finds_the_ink(self):
         img, sel, inked, _ = _arm_scene()
-        ink, _, _ = T.find_ink(img, sel, 0.5)
-        assert (ink & inked).sum() > 0.9 * inked.sum()
+        ink, _ = T.find_ink(img, sel, 0.5)
+        assert (ink[inked > 0] > 0.5).mean() > 0.9
 
     def test_ink_is_only_inside_the_selection(self):
         img, sel, _, _ = _arm_scene()
         tight = np.zeros_like(sel)
         tight[100:140, 140:200] = 1
-        ink, _, _ = T.find_ink(img, tight, 1.0)
+        ink, _ = T.find_ink(img, tight, 1.0)
         assert ink[tight == 0].sum() == 0
 
     def test_clean_skin_gives_no_ink(self):
@@ -95,6 +95,12 @@ class TestFindInk:
         sel[85:105, 20:80] = 1
         for s in (0.0, 0.5, 1.0):
             assert T.find_ink(img, sel, s)[0].sum() == 0
+
+    def test_a_grey_wash_that_is_barely_darker_than_the_skin_is_found(self):
+        # A soft grey tattoo: no darker than a shadow, only less warm than skin. This is what a faded real one looks like.
+        img, sel, inked, _ = _arm_scene(ink_colour=(150, 150, 150), ink_alpha=0.8)
+        ink, _ = T.find_ink(img, sel, 0.5)
+        assert (ink[inked > 0] > 0.5).mean() > 0.9
 
 
 class TestRemoveTattoo:
@@ -246,14 +252,12 @@ class TestPersonMask:
         sel[10:180, 100:270] = 1  # covers the shadow band, the wall and the arm with the tattoo
         return np.clip(img, 0, 255).astype(np.uint8), sel, ink > 0, arm
 
-    def test_without_the_person_mask_a_dark_neutral_backdrop_in_the_selection_counts_as_ink(self):
-        img, sel, _, arm = self._scene()
+    def test_without_the_person_mask_the_tattoo_is_still_removed(self):
+        # The tool works without the matting model: it just has no backdrop protection beyond colour and brightness.
+        img, sel, ink, arm = self._scene()
         out = T.remove_tattoo(img, sel)
-        band = np.zeros(img.shape[:2], bool)
-        band[20:50, 100:270] = True
-        assert not np.array_equal(
-            out[band], img[band]
-        )  # the documented limit: dark neutral stuff in the area is painted
+        skin = np.array([110, 140, 195], np.float32)
+        assert _lab_dist(out[ink].mean(0), skin) < 15
 
     def test_with_the_person_mask_the_backdrop_is_never_touched(self):
         img, sel, ink, arm = self._scene()
@@ -316,7 +320,8 @@ class TestShadedSkinIsNotInk:
         features[150:160, 110:260] = True
         features[80:83, 120:170] = True
         features &= arm > 0
-        assert np.array_equal(out[features], img[features])
+        changed = (out[features] != img[features]).any(axis=1)
+        assert changed.mean() < 0.05  # at most the rows touching the tattoo's own soft edge
 
     def test_pixels_that_are_not_ink_are_not_changed_at_all(self):
         img, sel, inked, arm = self._scene()
@@ -336,16 +341,26 @@ class TestShadedSkinIsNotInk:
 
 
 class TestHelpers:
-    def test_local_skin_uses_only_skin_pixels(self):
-        lab = np.zeros((60, 60, 3), np.float32)
-        lab[:, :] = (150, 140, 150)
-        lab[:, 40:] = (130, 110, 60)  # a wall on the right, not skin
-        skin = np.zeros((60, 60), bool)
-        skin[:, :40] = True
-        hole = np.zeros((60, 60), np.uint8)
-        hole[25:35, 30:50] = 1
-        ref = T.local_skin(lab, skin, hole, 3)
-        assert np.abs(ref[30, 45] - np.array([150, 140, 150])).max() < 1.0
+    def test_skin_model_follows_brightness(self):
+        # Skin gets a little warmer as it gets darker; the model must follow that and not average it away.
+        rng = np.random.default_rng(1)
+        lab = np.zeros((80, 80, 3), np.float32)
+        lab[..., 0] = rng.uniform(90, 190, (80, 80))
+        lab[..., 1] = 150 - 0.1 * (lab[..., 0] - 90) + rng.normal(0, 0.5, (80, 80))
+        lab[..., 2] = 150 + rng.normal(0, 0.5, (80, 80))
+        model = T.SkinModel(lab, np.ones((80, 80), bool))
+        a_dark, _ = model.reference(np.array([100.0]))
+        a_lit, _ = model.reference(np.array([180.0]))
+        assert a_dark[0] > a_lit[0] + 5
+
+    def test_envelope_removes_dark_features_but_keeps_the_shading(self):
+        y, x = np.mgrid[0:200, 0:300].astype(np.float32)
+        base = 200.0 - 0.2 * x  # a smooth gradient: the limb's shading
+        lum = base.copy()
+        lum[80:120, 100:160] -= 60  # a dark blob narrower than the structuring element
+        env = T._envelope(lum, np.ones(lum.shape, bool), 81)
+        assert abs(float(env[100, 130]) - float(base[100, 130])) < 6
+        assert float(env[100, 10]) > float(env[100, 290]) + 30
 
 
 class TestEndpoint:

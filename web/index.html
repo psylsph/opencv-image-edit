@@ -245,7 +245,7 @@
             <span>Sensitivity (higher catches fainter ink) <output id="tattoo-grow-value">0.50</output></span>
             <input type="range" id="tattoo-grow" min="0" max="1" step="0.05" value="0.5" />
           </label>
-          <p class="face-note">Tap the tattoo to select it, or paint over it. Like laser removal, only the pixels that are tattoo ink (dark brown, black or grey-blue, not shaded skin) are replaced, each by the colour of the real skin pixel next to it, so skin texture, pores and creases stay. The background is never touched. Dark hair or eyelashes inside the painted area can count as ink, so paint close around the tattoo.</p>
+          <p class="face-note">Tap the tattoo to select it, or paint over it. The ink (grey, blue-grey or black: anything less warm than the skin around it) is taken out and the skin underneath is rebuilt with the limb's own shading and grain, so a big faded tattoo goes as well as a small dark one. Shadows, creases and freckles are left alone and the background is never touched. Paint over the whole tattoo, a little past its edge is fine; dark hair or eyelashes inside the painted area can count as ink.</p>
         </div>
       </details>
 
@@ -448,6 +448,6 @@
     </button>
   </nav>
 
-  <script type="module" src="app.js?v=52"></script>
+  <script type="module" src="app.js?v=53"></script>
 </body>
 </html>
