@@ -118,6 +118,22 @@ def test_pipeline_passthrough_when_all_disabled():
     assert result.grain_only is None
 
 
+def test_pipeline_accepts_image_with_alpha_channel():
+    """A BGRA input (transparent PNG) is flattened to 3-channel BGR before any stage runs."""
+    img = np.dstack([_bgr(64, 96), np.full((96, 64), 255, np.uint8)])
+    result = process_pipeline(img, ProcessRequest())
+    assert result.original.shape == (96, 64, 3)
+    assert result.final.shape == (96, 64, 3)
+
+
+@pytest.mark.skipif(not _matting_model_available(), reason="u2netp.onnx not present")
+def test_pipeline_background_with_alpha_input():
+    """Regression: background removal on a BGRA photo crashed ('Expected: 3, Got: 4')."""
+    img = np.dstack([_bgr(64, 96), np.full((96, 64), 255, np.uint8)])
+    req = ProcessRequest(background={"enabled": True, "mode": "blur"})
+    assert process_pipeline(img, req).final.shape[:2] == (96, 64)
+
+
 # ---------------------------------------------------------------------------
 # Background stage
 # ---------------------------------------------------------------------------

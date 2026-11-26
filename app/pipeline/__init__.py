@@ -77,6 +77,14 @@ def process_pipeline(
 
         # 1. Pre-process (downscale if oversized)
         original = resize_if_needed(img_bgr, get_settings().max_image_dimension)
+        # Every stage (matting, face, filters) expects plain 3-channel BGR: a PNG/WebP/HEIC
+        # with an alpha channel used to crash the matting model ("Expected: 3, Got: 4").
+        if original.ndim == 2:
+            original = cv2.cvtColor(original, cv2.COLOR_GRAY2BGR)
+        elif original.shape[2] == 4:
+            a = original[:, :, 3:4].astype(np.float32) / 255.0
+            white = np.full_like(original[:, :, :3], 255, dtype=np.float32)
+            original = np.clip(original[:, :, :3] * a + white * (1 - a), 0, 255).astype(np.uint8)
         current = original.copy()
         upscaled_out: np.ndarray | None = None
         mask_debug: np.ndarray | None = None

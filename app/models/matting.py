@@ -131,6 +131,10 @@ class MattingModel:
         [0, 1] — no sigmoid needed.
         """
         h, w = img_bgr.shape[:2]
+        if img_bgr.ndim == 2:
+            img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_GRAY2BGR)
+        elif img_bgr.shape[2] == 4:
+            img_bgr = img_bgr[:, :, :3]
         size = self.input_size
         # BGR -> RGB, resize, normalize (ImageNet stats, [0,1] pixel range)
         rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
