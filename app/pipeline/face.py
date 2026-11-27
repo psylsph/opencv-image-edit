@@ -234,6 +234,58 @@ def visible_face_mask(labels: np.ndarray, size: int, feather: float = 2.0) -> np
     return cv2.GaussianBlur(out, (0, 0), feather) if feather > 0 else out
 
 
+def average_identity(embeddings: list[np.ndarray], min_cos: float = 0.25) -> np.ndarray:
+    """One unit-length identity from several readings of the same person (the first is the reference).
+
+    Averaging photos cancels pose, lighting and expression noise, so the likeness is steadier than from one frame. A
+    photo whose identity is far from the first (cosine below ``min_cos``) is a different person or a bad frame and is
+    left out.
+    """
+    ref = np.asarray(embeddings[0], np.float32)
+    ref = ref / (np.linalg.norm(ref) + 1e-9)
+    acc = ref.copy()
+    for e in embeddings[1:]:
+        e = np.asarray(e, np.float32)
+        e = e / (np.linalg.norm(e) + 1e-9)
+        if float(e @ ref) >= min_cos:
+            acc += e
+    return (acc / (np.linalg.norm(acc) + 1e-9)).astype(np.float32)
+
+
+def transplant_texture(
+    crop: np.ndarray, restored: np.ndarray, amount: float, sigma: float
+) -> np.ndarray:
+    """Take the fine skin detail (pores, lashes, hair strands) from ``restored`` but keep ``crop``'s identity.
+
+    The restorer sharpens by reinventing the face, which pulls the likeness toward a generic one. Its *low* frequencies
+    (shape, tone) are where that happens; its *high* frequencies are just texture. So the crop keeps its own low
+    frequencies and its high frequencies are replaced by the restorer's, by ``amount`` 0..1.
+    """
+    amount = float(np.clip(amount, 0.0, 1.0))
+    if amount <= 0:
+        return crop
+    c = crop.astype(np.float32)
+    r = restored.astype(np.float32)
+    hp_c = c - cv2.GaussianBlur(c, (0, 0), sigma)
+    hp_r = r - cv2.GaussianBlur(r, (0, 0), sigma)
+    return np.clip(c + amount * (hp_r - hp_c) + 0.5, 0, 255).astype(np.uint8)
+
+
+def keep_original(
+    result: np.ndarray, original: np.ndarray, keep: np.ndarray, feather: float = 2.0
+) -> np.ndarray:
+    """Put the original pixels back wherever the user painted ``keep`` (non-zero) over hair, glasses or a hand."""
+    k = (np.asarray(keep) > 127).astype(np.float32)
+    if k.shape != result.shape[:2]:
+        k = cv2.resize(k, (result.shape[1], result.shape[0]), interpolation=cv2.INTER_LINEAR)
+    if feather > 0:
+        k = cv2.GaussianBlur(k, (0, 0), feather)
+    a = k[:, :, None]
+    return np.clip(
+        result.astype(np.float32) * (1 - a) + original.astype(np.float32) * a + 0.5, 0, 255
+    ).astype(np.uint8)
+
+
 def guard_visible(mask: np.ndarray, visible: np.ndarray, min_keep: float = 0.35) -> np.ndarray:
     """``mask`` limited to the visible part of the face, unless that would remove almost all of it.
 

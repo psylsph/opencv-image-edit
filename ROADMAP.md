@@ -242,8 +242,8 @@ Next:
       inpainting that keeps the identity features.
 - [ ] Live local composite: the server returns just the swapped face patch + mask + placement and `gl.js` composites it,
       so edge softness / skin-tone sliders become live.
-- [ ] Several faces at once ("swap all", one donor per face).
-- [ ] Drag to nudge the paste; a manual mask brush for hair/glasses/hands over the face.
+- [x] Several faces at once: 1.20.0 *Replace every face* (same donor on all; one donor per face is still open).
+- [x] 1.20.0: a *Fix mistakes* brush (tap or paint hair, glasses, a hand) puts the original pixels back over the swap. Drag-to-nudge is still open.
 - [ ] Faster restorer (the 512 px GFPGAN pass is the slowest step) or a smaller model; fp16 swapper (halves the download).
 - [ ] Run IPHONE-CHECKLIST.md on the iPhone 14 Pro (rings, tapping, HEIC donor).
 
@@ -344,3 +344,7 @@ Risks and limits:
 - Which iOS version is the 14 Pro on? (decides whether WebGPU is even a candidate for Phase 4)
 - Is the replacement background always a photo the user supplies, or do we also ship a few built-in scenes/gradients?
 - Should full-size export always happen on the phone when possible, or always on the server for consistency?
+
+**1.20.0 (face swap):** several photos of the new face (identity averaged, photos of someone else are ignored), *Replace every
+face*, *Skin detail* (the restorer's high frequencies only, so the likeness is not pulled toward a generic face), the
+keep-original brush, a safeguard when the parser blanks the whole face, and mirror-averaged ArcFace readings.

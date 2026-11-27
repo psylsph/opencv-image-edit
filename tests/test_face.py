@@ -515,6 +515,38 @@ class _StubEngine:
         return out
 
 
+class TestIdentityAndTexture:
+    def test_average_identity_is_unit_length_and_skips_other_people(self):
+        a = np.array([1.0, 0.0, 0.0], np.float32)
+        same = np.array([0.9, 0.3, 0.0], np.float32)
+        other = np.array([0.0, 1.0, 0.0], np.float32)  # cosine 0 with the reference
+        avg = geo.average_identity([a, same, other])
+        assert abs(float(np.linalg.norm(avg)) - 1.0) < 1e-5
+        assert avg[1] < 0.2 and avg[0] > 0.9  # the other person did not pull it away
+        assert np.allclose(geo.average_identity([a]), a)
+
+    def test_transplant_texture_keeps_tone_and_takes_detail(self):
+        rng = np.random.default_rng(1)
+        crop = np.full((64, 64, 3), 100, np.uint8)
+        grain = rng.integers(-30, 30, (64, 64, 1))
+        restored = (
+            np.clip(160 + grain, 0, 255).astype(np.uint8).repeat(3, 2)
+        )  # different tone + detail
+        out = geo.transplant_texture(crop, restored, 1.0, 2.0)
+        inner = out[16:48, 16:48].astype(np.float32)
+        assert abs(inner.mean() - 100) < 6  # tone stays the crop's
+        assert inner.std() > 8  # the restorer's grain came across
+        assert np.array_equal(geo.transplant_texture(crop, restored, 0.0, 2.0), crop)
+
+    def test_keep_original_puts_back_painted_pixels_only(self):
+        orig = np.full((20, 20, 3), 50, np.uint8)
+        res = np.full((20, 20, 3), 200, np.uint8)
+        keep = np.zeros((20, 20), np.uint8)
+        keep[:, :10] = 255
+        out = geo.keep_original(res, orig, keep, feather=0)
+        assert out[5, 2, 0] == 50 and out[5, 15, 0] == 200
+
+
 class TestApi:
     @pytest.fixture(autouse=True)
     def stub(self, monkeypatch):
@@ -594,8 +626,54 @@ class TestApi:
                 "hair": False,
                 "shape": 0.8,
                 "detail": 0.8,
+                "extra_donors": [],
+                "all_faces": False,
+                "texture": 0.0,
             }
         ]
+
+    def test_extra_donor_photos_and_options_reach_the_engine(self, test_client: TestClient):
+        img = np.full((80, 100, 3), (10, 20, 30), np.uint8)
+        extra = self._png(np.full((50, 50, 3), 90, np.uint8))
+        r = test_client.post(
+            "/api/v1/process",
+            files=[
+                ("file", ("a.png", self._png(img), "image/png")),
+                (
+                    "face_donor",
+                    ("d.png", self._png(np.full((60, 60, 3), 120, np.uint8)), "image/png"),
+                ),
+                ("face_donor_extra", ("e1.png", extra, "image/png")),
+                ("face_donor_extra", ("e2.png", extra, "image/png")),
+            ],
+            data={
+                "settings": json.dumps(
+                    {"face": {"enabled": True, "all_faces": True, "texture": 0.5}}
+                )
+            },
+        )
+        assert r.status_code == 200, r.text
+        kw = self.engine.calls[-1]
+        assert len(kw["extra_donors"]) == 2 and kw["all_faces"] is True and kw["texture"] == 0.5
+
+    def test_keep_mask_restores_the_original_pixels(self, test_client: TestClient):
+        img = np.full((80, 100, 3), (10, 20, 30), np.uint8)
+        keep = np.zeros((80, 100), np.uint8)
+        keep[:, :] = 255  # keep everything: the stub's white square must vanish
+        r = test_client.post(
+            "/api/v1/process",
+            files=[
+                ("file", ("a.png", self._png(img), "image/png")),
+                (
+                    "face_donor",
+                    ("d.png", self._png(np.full((60, 60, 3), 120, np.uint8)), "image/png"),
+                ),
+                ("face_keep", ("k.png", self._png(keep), "image/png")),
+            ],
+            data={"settings": json.dumps({"face": {"enabled": True}})},
+        )
+        assert r.status_code == 200, r.text
+        assert self._final(r)[40, 50].tolist() == [10, 20, 30]
 
     def test_hair_flag_reaches_the_engine(self, test_client: TestClient):
         assert self._post(test_client, {"hair": True}).status_code == 200

@@ -57,7 +57,7 @@ const DEFAULT_SETTINGS = {
     enabled: false, mode: "blur", blur_strength: 15, model_name: "u2netp",
     color: "#00b140", zoom: 1, offset_x: 0, offset_y: 0, feather: 0, shrink: 0, defringe: 0,
   },
-  face: { enabled: false, target: 0, donor: 0, blend: 0.5, color_match: 0.8, restore: 0.3, hair: false, shape: 0.8, detail: 0.8 },
+  face: { enabled: false, target: 0, donor: 0, blend: 0.5, color_match: 0.8, restore: 0.3, hair: false, shape: 0.8, detail: 0.8, all_faces: false, texture: 0 },
   grain: { enabled: false, intensity: 0.4 },
   upscale: { enabled: false, scale: 2, algorithm: "interp" },
   filters: {
@@ -246,10 +246,10 @@ function bindEvents() {
 
   // Inpaint (object removal) and Blur Area share one selection canvas + toolbar
   // (also used by Background "Paint BG"); only one of the two groups owns it.
-  const OWNERS = ["inpaint", "blur", "tattoo"];
+  const OWNERS = ["inpaint", "blur", "tattoo", "facekeep"];
   for (const owner of OWNERS) {
     $(`#${owner}-enabled`).addEventListener("change", (e) => {
-      const group = $(`#${owner}-group`);
+      const group = $(owner === "facekeep" ? "#face-group" : `#${owner}-group`);
       if (e.target.checked) {
         for (const other of OWNERS) if (other !== owner) $(`#${other}-enabled`).checked = false;
         clearClickSelection();
@@ -367,6 +367,7 @@ function bindEvents() {
     ["#face-color", "#face-color-value", (v) => parseFloat(v).toFixed(2)],
     ["#face-restore", "#face-restore-value", (v) => parseFloat(v).toFixed(2)],
     ["#face-detail", "#face-detail-value", (v) => parseFloat(v).toFixed(2)],
+    ["#face-texture", "#face-texture-value", (v) => parseFloat(v).toFixed(2)],
   ];
   sliders.forEach(([slider, output, fmt]) => {
     const s = $(slider), o = $(output);
@@ -502,6 +503,7 @@ function activeTool() {
 const TOOL_LABELS = {
   inpaint: { title: "✂️ Remove object", verb: "remove" },
   tattoo: { title: "🩹 Remove tattoo", verb: "remove the tattoo from" },
+  facekeep: { title: "🙂 Keep from the original", verb: "keep as in the original (hair, glasses, hand)" },
   blur: { title: "💧 Blur area", verb: "blur" },
   bg: { title: "🌫️ Paint the background", verb: "treat as background" },
 };
@@ -682,6 +684,8 @@ function collectSettings() {
       hair: $("#face-hair").checked,
       shape: parseFloat($("#face-shape").value),
       detail: parseFloat($("#face-detail").value),
+      all_faces: $("#face-all").checked,
+      texture: parseFloat($("#face-texture").value),
     },
     background: {
       enabled: $("#bg-enabled").checked,
@@ -746,7 +750,8 @@ function applyPreset(name) {
   const fd = { ...DEFAULT_SETTINGS.face, ...s.face };
   $("#face-enabled").checked = fd.enabled;
   $("#face-hair").checked = !!fd.hair;
-  for (const [id, key] of [["face-blend", "blend"], ["face-color", "color_match"], ["face-restore", "restore"], ["face-shape", "shape"], ["face-detail", "detail"]]) {
+  $("#face-all").checked = !!fd.all_faces;
+  for (const [id, key] of [["face-texture", "texture"], ["face-blend", "blend"], ["face-color", "color_match"], ["face-restore", "restore"], ["face-shape", "shape"], ["face-detail", "detail"]]) {
     setSlider($(`#${id}`), fd[key], $(`#${id}-value`), (v) => parseFloat(v).toFixed(2));
   }
   faceUi.target = fd.target; faceUi.donorIdx = fd.donor;
@@ -1346,7 +1351,7 @@ async function runSegmentation(clientX, clientY) {
     drawDetectedMaskOnCanvas(data.mask);
     const areaPct = (data.mask_area_pct * 100).toFixed(1);
     const borderText = data.selection_border_px ? `, +${data.selection_border_px}px edge margin` : "";
-    const nextStep = { blur: "Apply blur", tattoo: "Remove tattoo" }[state.mask.owner] || "Remove object";
+    const nextStep = { blur: "Apply blur", tattoo: "Remove tattoo", facekeep: "Process" }[state.mask.owner] || "Remove object";
     statusEl.textContent =
       `Selected ${areaPct}% of the image${borderText}. Press “${nextStep}”, or tap elsewhere to re-select.`;
   } catch (err) {
@@ -1398,7 +1403,7 @@ async function processImage() {
 
   // Branch: if Remove Object is on AND the user has painted a mask, hit
   // the dedicated /api/v1/inpaint endpoint (it accepts a separate mask file).
-  if (state.mask.enabled && hasMaskContent()) {
+  if (state.mask.enabled && state.mask.owner !== "facekeep" && hasMaskContent()) {
     await ({ blur: processBlurArea, tattoo: processTattoo }[state.mask.owner] || processInpaint)();
     return;
   }
@@ -1439,6 +1444,17 @@ async function processImage() {
       return;
     }
     formData.append("face_donor", faceUi.donorFile, faceUi.donorFile.name || "face");
+    for (const f of faceUi.extraFiles) formData.append("face_donor_extra", f, f.name || "face");
+    if (state.mask.enabled && state.mask.owner === "facekeep" && hasMaskContent()) {
+      try {
+        formData.append("face_keep", await getMaskPngBlob(), "face-keep.png");
+      } catch (err) {
+        setStatus(`Error preparing the keep mask: ${err.message}`, "error");
+        state.processing = false;
+        updateProcessButton();
+        return;
+      }
+    }
     setStatus(settings.face.hair ? "Swapping the face and hair… this can take 20 s or more." : "Swapping the face… this can take 10 s or more.");
   }
 
@@ -1809,6 +1825,7 @@ init().catch((err) => console.error("Init failed:", err));
 const faceUi = {
   target: 0, donorIdx: 0,          // chosen face indexes (left to right, same order as the server)
   donorFile: null, donorThumbUrl: null,
+  extraFiles: [],                  // more photos of the same person (identity is averaged)
   photo: null,                     // { file, data } detection result for state.file
   donor: null,                     // { file, data } detection result for the donor photo
   models: null,                    // /api/v1/faces/status
@@ -1821,6 +1838,14 @@ function initFaceUi() {
     const f = e.target.files && e.target.files[0];
     if (f) setDonorFile(f);
   });
+  $("#face-extra-btn").addEventListener("click", () => $("#face-extra-input").click());
+  $("#face-extra-input").addEventListener("change", (e) => {
+    faceUi.extraFiles = [...faceUi.extraFiles, ...Array.from(e.target.files || [])].slice(0, 8);
+    e.target.value = "";
+    renderFaceUi();
+  });
+  $("#face-all").addEventListener("change", renderFaceUi);
+  $("#face-extra-info").addEventListener("click", () => { faceUi.extraFiles = []; renderFaceUi(); });
   $("#face-enabled").addEventListener("change", () => { if ($("#face-enabled").checked) detectFaces(); renderFaceUi(); });
   $("#face-group").addEventListener("toggle", () => { if ($("#face-group").open) detectFaces(); renderFaceUi(); });
   fetch("/api/v1/faces/status").then((r) => r.json()).then((m) => { faceUi.models = m; renderFaceUi(); }).catch(() => {});
@@ -1928,11 +1953,16 @@ function renderFaceUi() {
   }
   $("#face-info").textContent = parts.join(" ");
 
-  $("#face-target-pick").hidden = !(nPhoto > 1);
   $("#face-donor-pick").hidden = !(nDonor > 1);
   if (nPhoto > 1) faceChips("#face-target-chips", nPhoto, faceUi.target, (i) => { faceUi.target = i; renderFaceUi(); });
   if (nDonor > 1) faceChips("#face-donor-chips", nDonor, faceUi.donorIdx, (i) => { faceUi.donorIdx = i; renderFaceUi(); });
   $("#face-donor-thumb").hidden = !faceUi.donorFile;
+  const nx = faceUi.extraFiles.length;
+  $("#face-extra-info").hidden = !nx;
+  $("#face-extra-info").textContent = nx ? `+${nx} more photo${nx > 1 ? "s" : ""} of the same person (tap here to remove them).` : "";
+  $("#face-all-row").hidden = !(nPhoto > 1);
+  $("#face-target-pick").hidden = !(nPhoto > 1) || $("#face-all").checked;
+  $("#face-texture-row").hidden = !!(models && models.ready && !models.restorer);
   $("#face-donor-btn").textContent = faceUi.donorFile ? "🙂 Change photo with the new face" : "🙂 Choose photo with the new face";
   drawFaceOverlay();
 }
@@ -1941,7 +1971,7 @@ function renderFaceUi() {
 function drawFaceOverlay() {
   const svg = $("#face-overlay");
   const data = faceUi.photo?.data;
-  const show = !!data && data.faces.length > 0 && $("#face-group").open && !!state.file;
+  const show = !!data && data.faces.length > 0 && $("#face-group").open && !!state.file && !state.mask.enabled;
   svg.toggleAttribute("hidden", !show);  // SVG elements have no .hidden property
   svg.replaceChildren();
   if (!show) return;

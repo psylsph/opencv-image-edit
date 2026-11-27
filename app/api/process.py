@@ -38,6 +38,8 @@ async def process(
     background_image: UploadFile | None = File(default=None),
     matte: UploadFile | None = File(default=None),
     face_donor: UploadFile | None = File(default=None),
+    face_donor_extra: list[UploadFile] = File(default=[]),  # noqa: B008
+    face_keep: UploadFile | None = File(default=None),
 ) -> dict:
     """Process an uploaded image through the pipeline.
 
@@ -46,6 +48,8 @@ async def process(
         settings: JSON-encoded ProcessRequest.
         matte: subject matte previously returned by ``/api/v1/matte``; avoids running the model again.
         face_donor: photo whose face replaces one in ``file``, required when ``face.enabled``.
+        face_donor_extra: more photos of the same person (optional, repeatable) to average the identity over.
+        face_keep: optional mask (white = keep the original pixels, for hair/glasses/hands over the face).
         background_image: replacement background, required when ``background.mode`` is ``image``.
 
     Returns:
@@ -106,6 +110,24 @@ async def process(
         if donor_img.ndim == 3 and donor_img.shape[2] == 4:
             donor_img = donor_img[:, :, :3]
 
+    extra_imgs: list[np.ndarray] = []
+    keep_img = None
+    if req.face.enabled:
+        for up in face_donor_extra:
+            try:
+                im = decode_to_bgr(await read_image_bytes(up))
+            except DecodeError as exc:
+                image_process_total.labels(status="decode_error").inc()
+                raise HTTPException(status_code=400, detail=f"invalid donor photo: {exc}") from exc
+            extra_imgs.append(im[:, :, :3] if im.ndim == 3 and im.shape[2] == 4 else im)
+        if face_keep is not None:
+            try:
+                keep_img = decode_to_bgr(await read_image_bytes(face_keep))
+            except DecodeError as exc:
+                image_process_total.labels(status="decode_error").inc()
+                raise HTTPException(status_code=400, detail=f"invalid keep mask: {exc}") from exc
+            keep_img = keep_img[:, :, 0] if keep_img.ndim == 3 else keep_img
+
     started = time.perf_counter()
     status = "ok"
     try:
@@ -116,6 +138,8 @@ async def process(
             background_image=bg_image,
             matte=matte_img,
             face_donor=donor_img,
+            face_donors_extra=extra_imgs,
+            face_keep=keep_img,
         )
     except AppError as exc:
         status = "processing_error"

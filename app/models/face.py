@@ -241,13 +241,18 @@ class FaceEngine:
         session: ort.InferenceSession,
         blend: float,
         strength: float,
+        texture: bool = False,
     ) -> np.ndarray:
+        """GFPGAN on the aligned face. ``texture``: keep the face as it is and only take the restorer's fine detail."""
         crop, m = geo.align_crop(img, kps, geo.ffhq_template(512), 512)
         blob = ((crop[:, :, ::-1].astype(np.float32) / 255.0 - 0.5) / 0.5).transpose(2, 0, 1)[None]
         out = session.run(None, {session.get_inputs()[0].name: blob})[0][0]
         restored = np.clip((out.transpose(1, 2, 0)[:, :, ::-1] + 1.0) * 127.5 + 0.5, 0, 255).astype(
             np.uint8
         )
+        if texture:
+            restored = geo.transplant_texture(crop, restored, strength, 512 * 0.012)
+            strength = 1.0
         return geo.paste_back(img, restored, m, geo.ffhq_face_mask(512, blend), opacity=strength)
 
     def parse(self, crop_bgr: np.ndarray) -> np.ndarray:
@@ -310,6 +315,16 @@ class FaceEngine:
 
     # -- the swap ----------------------------------------------------------------------------------------------
 
+    def _identity(self, donor_bgr: np.ndarray, donor: Face, extra: list[np.ndarray]) -> np.ndarray:
+        """The donor's identity, averaged over extra photos of the same person (their most prominent face)."""
+        embs = [self._embedding(donor_bgr, donor)]
+        for img in extra:
+            found = self.detect(img)
+            if found:
+                f = max(found, key=lambda f: f.box[2] * f.box[3])
+                embs.append(self._embedding(img, self.refine(img, f)))
+        return geo.average_identity(embs) if len(embs) > 1 else embs[0]
+
     def swap(
         self,
         target_bgr: np.ndarray,
@@ -323,14 +338,21 @@ class FaceEngine:
         hair: bool = False,
         shape: float = 0.8,
         detail: float = 0.8,
+        extra_donors: list[np.ndarray] | None = None,
+        all_faces: bool = False,
+        texture: float = 0.0,
     ) -> np.ndarray:
-        """Put the donor's face (and with ``hair`` their hair) on one face of ``target_bgr``; same size back.
+        """Put the donor's face (and with ``hair`` their hair) on one face (or ``all_faces``) of ``target_bgr``.
 
         ``shape`` 0..1: how much of the donor's own face shape (jaw, cheeks, expression) to take. The generator alone
         keeps the target's outline and only repaints the inner features, so at 0 the result looks like the target
         wearing the donor's features. Above 0 the donor's face (aligned, colour-matched to the target's skin) is
         pasted into the target crop *before* the generator runs; the generator then harmonises it with one
         identity, lighting and skin. At 1 the face shape and expression are the donor's.
+
+        ``extra_donors``: more photos of the same person; the identity is averaged over all of them (steadier
+        likeness). ``texture`` 0..1: take only the restorer's fine skin detail, leaving the likeness alone (needs the
+        restorer). Same size back.
         """
         target_faces = self.detect(target_bgr)
         if not target_faces:
@@ -349,10 +371,39 @@ class FaceEngine:
         if hair:
             self._path("parser")  # fail early with a clear message if hair swapping isn't installed
 
-        target = self.refine(target_bgr, target_faces[target_index])
         donor = self.refine(donor_bgr, donor_faces[donor_index])
         self._load_swapper()
-        emb = self._embedding(donor_bgr, donor)
+        emb = self._identity(donor_bgr, donor, extra_donors or [])
+        indices = range(len(target_faces)) if all_faces else [target_index]
+        result = target_bgr
+        for i in indices:
+            target = self.refine(target_bgr, target_faces[i])
+            result = self._swap_face(
+                result, target_bgr, target, donor_bgr, donor, emb,
+                blend=blend, color_match=color_match, restore=restore, hair=hair,
+                shape=shape, detail=detail, texture=texture,
+            )  # fmt: skip
+        return result
+
+    def _swap_face(
+        self,
+        base: np.ndarray,
+        original: np.ndarray,
+        target: Face,
+        donor_bgr: np.ndarray,
+        donor: Face,
+        emb: np.ndarray,
+        *,
+        blend: float,
+        color_match: float,
+        restore: float,
+        hair: bool,
+        shape: float,
+        detail: float,
+        texture: float,
+    ) -> np.ndarray:
+        """Swap one face into ``base`` (the photo with any earlier faces already swapped); ``original`` is untouched."""
+        target_bgr = base
 
         size = 256 if self._swapper_kind == "hyperswap" else 128
         crop, m = geo.align_crop(target_bgr, target.kps, geo.swap_template(size), size)
@@ -390,12 +441,16 @@ class FaceEngine:
             patch = geo.match_color(patch, crop, (mask > 0.5).astype(np.float32), color_match * 0.4)
         result = geo.paste_back(target_bgr, patch, m, mask)
         result = geo.match_detail(
-            result, target_bgr, geo.warp_mask_to_image(mask, m, target_bgr.shape), detail
+            result, original, geo.warp_mask_to_image(mask, m, target_bgr.shape), detail
         )
 
         restorer = self._restore_session() if restore > 0 else None
         if restorer is not None:
             result = self._restore(result, target.kps, restorer, blend, restore)
+        if texture > 0 and self._restore_session() is not None:
+            result = self._restore(
+                result, target.kps, self._restore_session(), blend, texture, texture=True
+            )
         if hair:
             result = self._transplant_hair(result, target_bgr, donor_bgr, target, donor)
         return result

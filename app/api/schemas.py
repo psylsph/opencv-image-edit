@@ -42,6 +42,10 @@ class FaceRequest(BaseModel):
         default=0.8, ge=0, le=1.5
     )  # give the new face the photo's sharpness and grain
     shape: float = Field(default=0.8, ge=0, le=1)  # 0 keep their face shape, 1 take the donor's
+    all_faces: bool = False  # replace every face in the photo with the donor (target is ignored)
+    texture: float = Field(
+        default=0.0, ge=0, le=1
+    )  # fine skin detail from the restorer, without changing the likeness
 
 
 class GrainRequest(BaseModel):

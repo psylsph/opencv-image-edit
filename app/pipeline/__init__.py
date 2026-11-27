@@ -56,6 +56,8 @@ def process_pipeline(
     background_image: Optional[np.ndarray] = None,
     matte: Optional[np.ndarray] = None,
     face_donor: Optional[np.ndarray] = None,
+    face_donors_extra: Optional[list] = None,
+    face_keep: Optional[np.ndarray] = None,
 ) -> ProcessResult:
     """Run the full processing pipeline.
 
@@ -66,6 +68,8 @@ def process_pipeline(
             explicitly background. Used instead of AI matting when provided.
         background_image: BGR photo for ``background.mode == "image"``.
         face_donor: BGR photo whose face replaces one in the image when ``face.enabled``.
+        face_donors_extra: more photos of the same person; the identity is averaged over them.
+        face_keep: optional grayscale mask (255 = put the original pixels back over the swapped face, e.g. a hand).
         matte: optional 8-bit grayscale subject matte from ``/api/v1/matte`` (255 = subject); skips the model.
 
     Returns:
@@ -108,7 +112,15 @@ def process_pipeline(
                 hair=f.hair,
                 shape=f.shape,
                 detail=f.detail,
+                extra_donors=face_donors_extra or [],
+                all_faces=f.all_faces,
+                texture=f.texture,
             )
+            if face_keep is not None:
+                from app.pipeline.face import keep_original
+
+                k = face_keep[:, :, 0] if face_keep.ndim == 3 else face_keep
+                current = keep_original(current, original, k)
 
         # 2. Background
         if request.background.enabled:
