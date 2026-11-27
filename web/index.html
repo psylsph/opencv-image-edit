@@ -12,7 +12,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="style.css?v=27" />
+  <link rel="stylesheet" href="style.css?v=28" />
 </head>
 <body>
   <main class="app">
@@ -88,77 +88,6 @@
     </section>
 
     <section class="controls-section" aria-label="Image processing controls">
-      <details class="control-group" id="face-group">
-        <summary>
-          <span class="control-icon" aria-hidden="true">🙂</span>
-          <span>Face swap</span>
-        </summary>
-        <div class="control-body">
-          <label class="checkbox-row">
-            <input type="checkbox" id="face-enabled" />
-            <span>Replace a face with one from another photo</span>
-          </label>
-          <p class="face-note" id="face-note" hidden></p>
-          <div class="bg-image-row">
-            <button id="face-donor-btn" class="btn btn-secondary" type="button">🙂 Choose photo with the new face</button>
-            <img id="face-donor-thumb" alt="Photo with the new face" hidden />
-            <input id="face-donor-input" type="file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif" hidden />
-          </div>
-          <div class="bg-image-row">
-            <button id="face-extra-btn" class="btn btn-secondary" type="button">➕ Add more photos of the same person</button>
-            <input id="face-extra-input" type="file" multiple accept="image/png,image/jpeg,image/webp,image/heic,image/heif" hidden />
-          </div>
-          <div class="face-extra-list" id="face-extra-list" role="list" aria-label="More photos of the same person"></div>
-          <p class="face-info" id="face-extra-info" hidden></p>
-          <p class="face-info" id="face-info" aria-live="polite"></p>
-          <div class="face-pick" id="face-target-pick" hidden>
-            <span>Replace which face in your photo?</span>
-            <div class="face-chips" id="face-target-chips" role="group" aria-label="Face to replace"></div>
-          </div>
-          <div class="face-pick" id="face-donor-pick" hidden>
-            <span>Use which face from the new photo?</span>
-            <div class="face-chips" id="face-donor-chips" role="group" aria-label="Face to use"></div>
-          </div>
-          <label class="checkbox-row" id="face-all-row" hidden>
-            <input type="checkbox" id="face-all" />
-            <span>Replace every face in the photo with this one</span>
-          </label>
-          <label class="checkbox-row" id="face-hair-row">
-            <input type="checkbox" id="face-hair" />
-            <span>Also take their hair (best with a plain background and no hat)</span>
-          </label>
-          <label class="slider-row">
-            <span>Face shape: theirs → new face <output id="face-shape-value">0.80</output></span>
-            <input type="range" id="face-shape" min="0" max="1" step="0.05" value="0.8" />
-          </label>
-          <label class="slider-row">
-            <span>Soften edge <output id="face-blend-value">0.50</output></span>
-            <input type="range" id="face-blend" min="0" max="1" step="0.05" value="0.5" />
-          </label>
-          <label class="slider-row">
-            <span>Match skin tone <output id="face-color-value">0.80</output></span>
-            <input type="range" id="face-color" min="0" max="1" step="0.05" value="0.8" />
-          </label>
-          <label class="slider-row">
-            <span>Match photo texture <output id="face-detail-value">0.80</output></span>
-            <input type="range" id="face-detail" min="0" max="1.5" step="0.05" value="0.8" />
-          </label>
-          <label class="slider-row" id="face-restore-row">
-            <span>Sharpen face <output id="face-restore-value">0.30</output></span>
-            <input type="range" id="face-restore" min="0" max="1" step="0.05" value="0.3" />
-          </label>
-          <label class="slider-row" id="face-texture-row">
-            <span>Skin detail (keeps the likeness) <output id="face-texture-value">0.00</output></span>
-            <input type="range" id="face-texture" min="0" max="1" step="0.05" value="0" />
-          </label>
-          <label class="checkbox-row">
-            <input type="checkbox" id="facekeep-enabled" />
-            <span>Fix mistakes: paint over hair, glasses or a hand to keep them as in the original</span>
-          </label>
-          <p class="face-note">More than one photo of the new face gives a steadier likeness (the best ones are sharp, front-on and evenly lit). Runs on the server when you tap Process (a few seconds). Only use faces of people who are happy for you to.</p>
-        </div>
-      </details>
-
       <details class="control-group" id="bg-group">
         <summary>
           <span class="control-icon" aria-hidden="true">🌫️</span>
@@ -300,6 +229,77 @@
             <span>Fill radius <output id="inpaint-radius-value">3</output></span>
             <input type="range" id="inpaint-radius" min="1" max="20" step="1" value="3" />
           </label>
+        </div>
+      </details>
+
+      <details class="control-group" id="face-group">
+        <summary>
+          <span class="control-icon" aria-hidden="true">🙂</span>
+          <span>Face swap</span>
+        </summary>
+        <div class="control-body">
+          <label class="checkbox-row">
+            <input type="checkbox" id="face-enabled" />
+            <span>Replace a face with one from another photo</span>
+          </label>
+          <p class="face-note" id="face-note" hidden></p>
+          <div class="bg-image-row">
+            <button id="face-donor-btn" class="btn btn-secondary" type="button">🙂 Choose photo with the new face</button>
+            <img id="face-donor-thumb" alt="Photo with the new face" hidden />
+            <input id="face-donor-input" type="file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif" hidden />
+          </div>
+          <div class="bg-image-row">
+            <button id="face-extra-btn" class="btn btn-secondary" type="button">➕ Add more photos of the same person</button>
+            <input id="face-extra-input" type="file" multiple accept="image/png,image/jpeg,image/webp,image/heic,image/heif" hidden />
+          </div>
+          <div class="face-extra-list" id="face-extra-list" role="list" aria-label="More photos of the same person"></div>
+          <p class="face-info" id="face-extra-info" hidden></p>
+          <p class="face-info" id="face-info" aria-live="polite"></p>
+          <div class="face-pick" id="face-target-pick" hidden>
+            <span>Replace which face in your photo?</span>
+            <div class="face-chips" id="face-target-chips" role="group" aria-label="Face to replace"></div>
+          </div>
+          <div class="face-pick" id="face-donor-pick" hidden>
+            <span>Use which face from the new photo?</span>
+            <div class="face-chips" id="face-donor-chips" role="group" aria-label="Face to use"></div>
+          </div>
+          <label class="checkbox-row" id="face-all-row" hidden>
+            <input type="checkbox" id="face-all" />
+            <span>Replace every face in the photo with this one</span>
+          </label>
+          <label class="checkbox-row" id="face-hair-row">
+            <input type="checkbox" id="face-hair" />
+            <span>Also take their hair (best with a plain background and no hat)</span>
+          </label>
+          <label class="slider-row">
+            <span>Face shape: theirs → new face <output id="face-shape-value">0.80</output></span>
+            <input type="range" id="face-shape" min="0" max="1" step="0.05" value="0.8" />
+          </label>
+          <label class="slider-row">
+            <span>Soften edge <output id="face-blend-value">0.50</output></span>
+            <input type="range" id="face-blend" min="0" max="1" step="0.05" value="0.5" />
+          </label>
+          <label class="slider-row">
+            <span>Match skin tone <output id="face-color-value">0.80</output></span>
+            <input type="range" id="face-color" min="0" max="1" step="0.05" value="0.8" />
+          </label>
+          <label class="slider-row">
+            <span>Match photo texture <output id="face-detail-value">0.80</output></span>
+            <input type="range" id="face-detail" min="0" max="1.5" step="0.05" value="0.8" />
+          </label>
+          <label class="slider-row" id="face-restore-row">
+            <span>Sharpen face <output id="face-restore-value">0.30</output></span>
+            <input type="range" id="face-restore" min="0" max="1" step="0.05" value="0.3" />
+          </label>
+          <label class="slider-row" id="face-texture-row">
+            <span>Skin detail (keeps the likeness) <output id="face-texture-value">0.00</output></span>
+            <input type="range" id="face-texture" min="0" max="1" step="0.05" value="0" />
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" id="facekeep-enabled" />
+            <span>Fix mistakes: paint over hair, glasses or a hand to keep them as in the original</span>
+          </label>
+          <p class="face-note">More than one photo of the new face gives a steadier likeness (the best ones are sharp, front-on and evenly lit). Runs on the server when you tap Process (a few seconds). Only use faces of people who are happy for you to.</p>
         </div>
       </details>
 
@@ -475,6 +475,6 @@
     </button>
   </nav>
 
-  <script type="module" src="app.js?v=58"></script>
+  <script type="module" src="app.js?v=59"></script>
 </body>
 </html>
