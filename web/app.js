@@ -1825,7 +1825,7 @@ init().catch((err) => console.error("Init failed:", err));
 const faceUi = {
   target: 0, donorIdx: 0,          // chosen face indexes (left to right, same order as the server)
   donorFile: null, donorThumbUrl: null,
-  extraFiles: [],                  // more photos of the same person (identity is averaged)
+  extraUrls: [], extraFiles: [],                  // more photos of the same person (identity is averaged)
   photo: null,                     // { file, data } detection result for state.file
   donor: null,                     // { file, data } detection result for the donor photo
   models: null,                    // /api/v1/faces/status
@@ -1840,12 +1840,13 @@ function initFaceUi() {
   });
   $("#face-extra-btn").addEventListener("click", () => $("#face-extra-input").click());
   $("#face-extra-input").addEventListener("change", (e) => {
-    faceUi.extraFiles = [...faceUi.extraFiles, ...Array.from(e.target.files || [])].slice(0, 8);
+    const added = Array.from(e.target.files || []);
+    faceUi.extraFiles = [...faceUi.extraFiles, ...added].slice(0, 8);
     e.target.value = "";
+    if (added.length) setFaceNote("");
     renderFaceUi();
   });
   $("#face-all").addEventListener("change", renderFaceUi);
-  $("#face-extra-info").addEventListener("click", () => { faceUi.extraFiles = []; renderFaceUi(); });
   $("#face-enabled").addEventListener("change", () => { if ($("#face-enabled").checked) detectFaces(); renderFaceUi(); });
   $("#face-group").addEventListener("toggle", () => { if ($("#face-group").open) detectFaces(); renderFaceUi(); });
   fetch("/api/v1/faces/status").then((r) => r.json()).then((m) => { faceUi.models = m; renderFaceUi(); }).catch(() => {});
@@ -1959,7 +1960,22 @@ function renderFaceUi() {
   $("#face-donor-thumb").hidden = !faceUi.donorFile;
   const nx = faceUi.extraFiles.length;
   $("#face-extra-info").hidden = !nx;
-  $("#face-extra-info").textContent = nx ? `+${nx} more photo${nx > 1 ? "s" : ""} of the same person (tap here to remove them).` : "";
+  $("#face-extra-info").textContent = nx ? `${nx} extra photo${nx > 1 ? "s" : ""} of the same person will be used (tap × to remove one).` : "";
+  const list = $("#face-extra-list");
+  list.replaceChildren();
+  for (const url of faceUi.extraUrls) URL.revokeObjectURL(url);
+  faceUi.extraUrls = faceUi.extraFiles.map((f) => URL.createObjectURL(f));
+  faceUi.extraFiles.forEach((f, i) => {
+    const wrap = document.createElement("div");
+    wrap.className = "face-extra"; wrap.setAttribute("role", "listitem");
+    const img = document.createElement("img");
+    img.src = faceUi.extraUrls[i]; img.alt = `Extra photo ${i + 1}`;
+    const x = document.createElement("button");
+    x.type = "button"; x.textContent = "×"; x.setAttribute("aria-label", `Remove extra photo ${i + 1}`);
+    x.addEventListener("click", () => { faceUi.extraFiles.splice(i, 1); renderFaceUi(); });
+    wrap.append(img, x);
+    list.appendChild(wrap);
+  });
   $("#face-all-row").hidden = !(nPhoto > 1);
   $("#face-target-pick").hidden = !(nPhoto > 1) || $("#face-all").checked;
   $("#face-texture-row").hidden = !!(models && models.ready && !models.restorer);

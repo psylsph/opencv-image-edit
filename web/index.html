@@ -12,7 +12,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="style.css?v=26" />
+  <link rel="stylesheet" href="style.css?v=27" />
 </head>
 <body>
   <main class="app">
@@ -108,6 +108,7 @@
             <button id="face-extra-btn" class="btn btn-secondary" type="button">➕ Add more photos of the same person</button>
             <input id="face-extra-input" type="file" multiple accept="image/png,image/jpeg,image/webp,image/heic,image/heif" hidden />
           </div>
+          <div class="face-extra-list" id="face-extra-list" role="list" aria-label="More photos of the same person"></div>
           <p class="face-info" id="face-extra-info" hidden></p>
           <p class="face-info" id="face-info" aria-live="polite"></p>
           <div class="face-pick" id="face-target-pick" hidden>
@@ -474,6 +475,6 @@
     </button>
   </nav>
 
-  <script type="module" src="app.js?v=56"></script>
+  <script type="module" src="app.js?v=57"></script>
 </body>
 </html>
