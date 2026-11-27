@@ -178,7 +178,14 @@ class FaceEngine:
             self._embedder = _session(self._path("embedder"))
         crop, _ = geo.align_crop(donor_bgr, face.kps, geo.arcface_template(112), 112)
         blob = ((crop[:, :, ::-1].astype(np.float32) - 127.5) / 127.5).transpose(2, 0, 1)[None]
-        emb = self._embedder.run(None, {self._embedder.get_inputs()[0].name: blob})[0].reshape(-1)
+        name = self._embedder.get_inputs()[0].name
+        emb = self._embedder.run(None, {name: blob})[0].reshape(-1)
+        # Test-time augmentation: the mirrored crop gives a second, independent reading of the same identity;
+        # averaging the two cancels pose and lighting noise in the vector.
+        flipped = self._embedder.run(None, {name: np.ascontiguousarray(blob[..., ::-1])})[0]
+        emb = emb / (np.linalg.norm(emb) + 1e-9) + flipped.reshape(-1) / (
+            np.linalg.norm(flipped) + 1e-9
+        )
         return (emb / (np.linalg.norm(emb) + 1e-9)).astype(np.float32)
 
     def _load_swapper(self) -> None:
@@ -377,7 +384,7 @@ class FaceEngine:
             skin = cv2.resize(
                 (tlabels == 1).astype(np.uint8), (size, size), interpolation=cv2.INTER_NEAREST
             )
-            mask = mask * geo.visible_face_mask(tlabels, size)
+            mask = geo.guard_visible(mask, geo.visible_face_mask(tlabels, size))
             patch = geo.skin_color_transfer(patch, crop, skin, color_match)
         else:
             patch = geo.match_color(patch, crop, (mask > 0.5).astype(np.float32), color_match * 0.4)

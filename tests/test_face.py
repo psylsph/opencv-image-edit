@@ -293,6 +293,14 @@ class TestPose:
 
 
 class TestTextureAndTone:
+    def test_guard_visible_keeps_the_swap_when_the_parser_blanks_the_face(self):
+        mask = np.ones((20, 20), np.float32)
+        none_visible = np.zeros((20, 20), np.float32)
+        assert np.array_equal(geo.guard_visible(mask, none_visible), mask)
+        half = np.zeros((20, 20), np.float32)
+        half[:, :10] = 1.0
+        assert geo.guard_visible(mask, half).sum() == 200  # a real occlusion is still honoured
+
     def test_visible_face_mask_drops_hair_and_glasses(self):
         labels = np.zeros((512, 512), np.uint8)
         labels[100:400, 100:400] = 1  # skin

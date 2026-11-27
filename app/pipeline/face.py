@@ -234,6 +234,21 @@ def visible_face_mask(labels: np.ndarray, size: int, feather: float = 2.0) -> np
     return cv2.GaussianBlur(out, (0, 0), feather) if feather > 0 else out
 
 
+def guard_visible(mask: np.ndarray, visible: np.ndarray, min_keep: float = 0.35) -> np.ndarray:
+    """``mask`` limited to the visible part of the face, unless that would remove almost all of it.
+
+    The parser sometimes mislabels a whole face (heavy make-up, strong colour cast, a beard, a dark photo) as hair
+    or background. Then the visible mask is nearly empty and the swap would silently paste nothing, so the photo
+    comes back unchanged. If less than ``min_keep`` of the swap area survives, the parser is wrong more likely than
+    a hand covering two thirds of the face, so the unrestricted mask is used.
+    """
+    total = float(mask.sum())
+    kept = mask * visible
+    if total <= 0 or float(kept.sum()) >= min_keep * total:
+        return kept
+    return mask
+
+
 def skin_color_transfer(
     patch: np.ndarray, crop: np.ndarray, skin: np.ndarray, strength: float
 ) -> np.ndarray:
