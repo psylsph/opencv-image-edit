@@ -94,6 +94,9 @@ class ProcessRequest(BaseModel):
     """Top-level request model that bundles all stage sub-requests together."""
 
     edit: EditRequest = Field(default_factory=EditRequest)
+    edits: list[EditRequest] = Field(
+        default_factory=list, max_length=8
+    )  # several tools, one edit_masks file each
     face: FaceRequest = Field(default_factory=FaceRequest)
     background: BackgroundRequest = Field(default_factory=BackgroundRequest)
     grain: GrainRequest = Field(default_factory=GrainRequest)

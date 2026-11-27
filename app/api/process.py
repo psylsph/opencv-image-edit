@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import base64
+import re
 import time
+from threading import Lock
 
 import numpy as np
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from starlette.concurrency import run_in_threadpool
 
 from app.api._common import read_image_bytes
 from app.api.schemas import ProcessRequest
@@ -20,6 +23,31 @@ from app.pipeline import ProcessResult, process_pipeline
 from app.pipeline.io import decode_to_bgr, encode_png
 
 router = APIRouter()
+
+# Progress of runs in flight, by the client's job id (polled by the page while a long run is going).
+_PROGRESS_MAX = 64
+_progress: dict[str, dict] = {}
+_progress_lock = Lock()
+
+
+def _set_progress(job: str, info: dict) -> None:
+    with _progress_lock:
+        _progress[job] = {**info, "t": time.time()}
+        if len(_progress) > _PROGRESS_MAX:
+            for old in sorted(_progress, key=lambda k: _progress[k]["t"])[
+                : len(_progress) - _PROGRESS_MAX
+            ]:
+                del _progress[old]
+
+
+@router.get("/api/v1/progress/{job}")
+def progress(job: str) -> dict:
+    """Which stage a ``/api/v1/process`` run with this ``job`` id is on (``steps``, ``done``, ``current``)."""
+    with _progress_lock:
+        info = _progress.get(job)
+    if info is None:
+        raise HTTPException(status_code=404, detail="no such job")
+    return {k: v for k, v in info.items() if k != "t"}
 
 
 def _to_b64_png(img: np.ndarray | None) -> str | None:
@@ -41,6 +69,8 @@ async def process(
     face_donor_extra: list[UploadFile] = File(default=[]),  # noqa: B008
     face_keep: UploadFile | None = File(default=None),
     edit_mask: UploadFile | None = File(default=None),
+    edit_masks: list[UploadFile] = File(default=[]),  # noqa: B008
+    job: str | None = Form(default=None),
 ) -> dict:
     """Process an uploaded image through the pipeline.
 
@@ -141,11 +171,26 @@ async def process(
             image_process_total.labels(status="decode_error").inc()
             raise HTTPException(status_code=400, detail=f"invalid selection mask: {exc}") from exc
         edit_img = edit_img[:, :, 0] if edit_img.ndim == 3 else edit_img
+    edit_imgs: list[np.ndarray] = []
+    for up in edit_masks:
+        try:
+            im = decode_to_bgr(await read_image_bytes(up))
+        except DecodeError as exc:
+            image_process_total.labels(status="decode_error").inc()
+            raise HTTPException(status_code=400, detail=f"invalid selection mask: {exc}") from exc
+        edit_imgs.append(im[:, :, 0] if im.ndim == 3 else im)
+    if len(edit_imgs) < sum(e.kind != "none" for e in req.edits):
+        raise HTTPException(
+            status_code=422, detail="every selection tool needs its own edit_masks file"
+        )
+    if job is not None and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", job):
+        raise HTTPException(status_code=422, detail="invalid job id")
 
     started = time.perf_counter()
     status = "ok"
     try:
-        result: ProcessResult = process_pipeline(
+        result: ProcessResult = await run_in_threadpool(
+            process_pipeline,
             img_bgr,
             req,
             background_mask=bg_mask_img,
@@ -155,6 +200,9 @@ async def process(
             face_donors_extra=extra_imgs,
             face_keep=keep_img,
             edit_mask=edit_img,
+            edit_masks=edit_imgs,
+            use_cache=True,
+            progress=(lambda info: _set_progress(job, info)) if job else None,
         )
     except AppError as exc:
         status = "processing_error"
@@ -173,5 +221,7 @@ async def process(
         "grain": _to_b64_png(result.grain_only),
         "upscaled": _to_b64_png(result.upscaled),
         "elapsed_seconds": elapsed,
+        "steps": result.steps,
+        "notes": result.notes,
         "output_size": {"width": result.final.shape[1], "height": result.final.shape[0]},
     }

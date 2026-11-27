@@ -6,12 +6,18 @@ Each stage can be individually enabled/disabled via the ProcessRequest.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import hashlib
+import time
+from collections import OrderedDict
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from threading import Lock
+from typing import Optional
 
 import cv2
 import numpy as np
 
-from app.api.schemas import ProcessRequest
+from app.api.schemas import EditRequest, ProcessRequest
 from app.config import get_settings
 from app.exceptions import ProcessingError, ValidationError
 from app.models.matting import get_matting_model
@@ -47,6 +53,221 @@ class ProcessResult:
     mask: np.ndarray | None  # 2D uint8 alpha debug (or None)
     upscaled: np.ndarray | None  # BGR upscaled intermediate (or None)
     grain_only: np.ndarray | None  # 2D uint8 grain visualization (or None)
+    steps: list = field(default_factory=list)  # [{"name", "seconds", "cached"}] per stage that ran
+    notes: list = field(default_factory=list)  # hints for the user (e.g. from tattoo removal)
+
+
+# --- stage cache -----------------------------------------------------------------------------------------------
+# The result after each stage is kept for the last few runs, keyed by everything that stage depends on (the input
+# image, every earlier stage's settings and uploads, and its own). Changing a late step (grain, a filter) then reuses
+# the background, selection tools and face swap instead of recomputing them (15-25 s -> about a second).
+
+_CACHE_MAX = 16
+_cache: "OrderedDict[str, dict]" = OrderedDict()
+_cache_lock = Lock()
+
+
+def clear_stage_cache() -> None:
+    with _cache_lock:
+        _cache.clear()
+
+
+def _digest(*parts) -> str:
+    h = hashlib.blake2b(digest_size=16)
+    for part in parts:
+        if part is None:
+            h.update(b"\x00none")
+        elif isinstance(part, np.ndarray):
+            h.update(str((part.shape, part.dtype.str)).encode())
+            h.update(np.ascontiguousarray(part).data)
+        elif isinstance(part, (list, tuple)):
+            h.update(_digest(*part).encode())
+        else:
+            h.update(str(part).encode())
+        h.update(b"|")
+    return h.hexdigest()
+
+
+def _snapshot(state: dict) -> dict:
+    return {
+        k: (v.copy() if isinstance(v, np.ndarray) else list(v) if isinstance(v, list) else v)
+        for k, v in state.items()
+    }
+
+
+@dataclass
+class _Stage:
+    name: str  # shown in the progress line
+    key: tuple  # what this stage depends on, besides the earlier stages
+    run: Callable[[dict], None]  # updates the state in place
+
+
+def _stages(
+    request: ProcessRequest,
+    background_mask,
+    background_image,
+    matte,
+    face_donor,
+    face_donors_extra,
+    face_keep,
+    edits: list[tuple[EditRequest, np.ndarray | None]],
+) -> list[_Stage]:
+    """The enabled stages, in the fixed order: background -> selection tools -> face -> grain -> upscale -> filters."""
+    out: list[_Stage] = []
+
+    if request.background.enabled:
+
+        def run_background(st):
+            current = st["current"]
+            if background_mask is not None:
+                mask = background_paint_mask_to_foreground_alpha(background_mask, current.shape)
+            elif matte is not None:
+                m = matte[:, :, 0] if matte.ndim == 3 else matte
+                if m.shape != current.shape[:2]:
+                    m = cv2.resize(
+                        m, (current.shape[1], current.shape[0]), interpolation=cv2.INTER_LINEAR
+                    )
+                mask = m.astype(np.float32) / 255.0
+            else:
+                mask = get_matting_model(request.background.model_name).predict(current)
+            st["mask_debug"] = get_alpha_debug(mask)
+            bg = request.background
+            if bg.mode == "blur":
+                current = apply_background_blur(current, mask, bg.blur_strength)
+            elif bg.mode in ("color", "image"):
+                if bg.mode == "image" and background_image is None:
+                    raise ProcessingError("background mode 'image' needs a background image")
+                current = apply_background_replace(
+                    current,
+                    mask,
+                    color=bg.color if bg.mode == "color" else None,
+                    background=background_image if bg.mode == "image" else None,
+                    zoom=bg.zoom,
+                    offset_x=bg.offset_x,
+                    offset_y=bg.offset_y,
+                    feather=bg.feather,
+                    shrink=bg.shrink,
+                    defringe=bg.defringe,
+                )
+            else:  # remove
+                current = apply_background_remove(current, mask)
+            if current.ndim == 3 and current.shape[2] == 4:
+                # Transparency is carried alongside and put back at the end, so every later stage sees plain BGR.
+                st["alpha"] = current[:, :, 3]
+                current = current[:, :, :3]
+            st["current"] = current
+
+        out.append(
+            _Stage(
+                "Background",
+                (request.background.model_dump_json(), background_mask, background_image, matte),
+                run_background,
+            )
+        )
+
+    labels = {"inpaint": "Remove object", "tattoo": "Remove tattoo", "blur": "Blur area"}
+    for edit, emask in edits:
+        if emask is None:
+            raise ProcessingError(f"the {labels[edit.kind].lower()} tool needs a selection mask")
+
+        def run_edit(st, edit=edit, emask=emask):
+            from app.pipeline.edit import apply_edit
+
+            st["current"], note = apply_edit(st["current"], emask, edit)
+            if note:
+                st["notes"].append(note)
+
+        out.append(_Stage(labels[edit.kind], (edit.model_dump_json(), emask), run_edit))
+
+    if request.face.enabled:
+        if face_donor is None:
+            raise ProcessingError("face replacement needs a donor photo")
+
+        def run_face(st):
+            from app.models.face import get_face_engine
+
+            f = request.face
+            before = st["current"]
+            current = get_face_engine().swap(
+                before,
+                face_donor,
+                target_index=f.target,
+                donor_index=f.donor,
+                blend=f.blend,
+                color_match=f.color_match,
+                restore=f.restore,
+                hair=f.hair,
+                shape=f.shape,
+                detail=f.detail,
+                extra_donors=face_donors_extra or [],
+                all_faces=f.all_faces,
+                texture=f.texture,
+            )
+            if face_keep is not None:
+                from app.pipeline.face import keep_original
+
+                k = face_keep[:, :, 0] if face_keep.ndim == 3 else face_keep
+                current = keep_original(current, before, k)
+            st["current"] = current
+
+        out.append(
+            _Stage(
+                "Face swap",
+                (request.face.model_dump_json(), face_donor, face_donors_extra or [], face_keep),
+                run_face,
+            )
+        )
+
+    if request.grain.enabled:
+
+        def run_grain(st):
+            st["current"], st["grain_only"] = apply_grain(st["current"], request.grain.intensity)
+
+        out.append(_Stage("Grain", (request.grain.model_dump_json(),), run_grain))
+
+    if request.upscale.enabled and request.upscale.scale > 1:
+
+        def run_upscale(st):
+            algorithm = None if request.upscale.algorithm == "interp" else request.upscale.algorithm
+            if algorithm is None:  # fast LANCZOS4 path, no model
+                up = cv2.resize(
+                    st["current"],
+                    None,
+                    fx=request.upscale.scale,
+                    fy=request.upscale.scale,
+                    interpolation=cv2.INTER_LANCZOS4,
+                )
+            else:
+                up = upscale(st["current"], request.upscale.scale, algorithm)
+            st["current"] = st["upscaled"] = up
+
+        out.append(_Stage("Upscale", (request.upscale.model_dump_json(),), run_upscale))
+
+    if request.filters.enabled:
+
+        def run_filters(st):
+            fl = request.filters
+            bgr = apply_color_adjustments(
+                st["current"],
+                brightness=fl.brightness,
+                contrast=fl.contrast,
+                saturation=fl.saturation,
+                sharpness=fl.sharpness,
+            )
+            if fl.vignette_strength > 0:
+                bgr = add_vignette(bgr, fl.vignette_strength)
+            if fl.sepia:
+                bgr = apply_sepia(bgr)
+            if fl.grayscale_blend > 0:
+                bgr = apply_grayscale(bgr, fl.grayscale_blend)
+            if fl.anime:
+                bgr = apply_anime_style(bgr, fl.anime_style)
+            if fl.painting:
+                bgr = apply_paint_style(bgr, fl.painting_style)
+            st["current"] = bgr
+
+        out.append(_Stage("Filters", (request.filters.model_dump_json(),), run_filters))
+    return out
 
 
 def process_pipeline(
@@ -59,6 +280,10 @@ def process_pipeline(
     face_donors_extra: Optional[list] = None,
     face_keep: Optional[np.ndarray] = None,
     edit_mask: Optional[np.ndarray] = None,
+    edit_masks: Optional[list] = None,
+    *,
+    use_cache: bool = False,
+    progress: Optional[Callable[[dict], None]] = None,
 ) -> ProcessResult:
     """Run the full processing pipeline.
 
@@ -72,7 +297,10 @@ def process_pipeline(
         face_donors_extra: more photos of the same person; the identity is averaged over them.
         face_keep: optional grayscale mask (255 = put the original pixels back over the swapped face, e.g. a hand).
         edit_mask: selection for ``request.edit`` (non-zero = selected area).
+        edit_masks: one selection per entry of ``request.edits``, same order.
         matte: optional 8-bit grayscale subject matte from ``/api/v1/matte`` (255 = subject); skips the model.
+        use_cache: reuse stage results from earlier runs with the same inputs (the API turns this on).
+        progress: called before each stage with ``{"steps": [names], "done": n, "current": name}``.
 
     Returns:
         ProcessResult with the final image plus debug visualizations.
@@ -91,140 +319,71 @@ def process_pipeline(
             a = original[:, :, 3:4].astype(np.float32) / 255.0
             white = np.full_like(original[:, :, :3], 255, dtype=np.float32)
             original = np.clip(original[:, :, :3] * a + white * (1 - a), 0, 255).astype(np.uint8)
-        current = original.copy()
-        upscaled_out: np.ndarray | None = None
-        mask_debug: np.ndarray | None = None
-        alpha_keep: np.ndarray | None = None
-        grain_only: np.ndarray | None = None
 
-        # 1b. Background first: every later step then works on the finished backdrop (and is quicker/easier)
-        if request.background.enabled:
-            if background_mask is not None:
-                mask = background_paint_mask_to_foreground_alpha(background_mask, current.shape)
-            elif matte is not None:
-                m = matte[:, :, 0] if matte.ndim == 3 else matte
-                if m.shape != current.shape[:2]:
-                    m = cv2.resize(
-                        m, (current.shape[1], current.shape[0]), interpolation=cv2.INTER_LINEAR
-                    )
-                mask = m.astype(np.float32) / 255.0
-            else:
-                matting = get_matting_model(request.background.model_name)
-                mask = matting.predict(current)
-            mask_debug = get_alpha_debug(mask)
-            if request.background.mode == "blur":
-                current = apply_background_blur(current, mask, request.background.blur_strength)
-            elif request.background.mode in ("color", "image"):
-                bg = request.background
-                if bg.mode == "image" and background_image is None:
-                    raise ProcessingError("background mode 'image' needs a background image")
-                current = apply_background_replace(
-                    current,
-                    mask,
-                    color=bg.color if bg.mode == "color" else None,
-                    background=background_image if bg.mode == "image" else None,
-                    zoom=bg.zoom,
-                    offset_x=bg.offset_x,
-                    offset_y=bg.offset_y,
-                    feather=bg.feather,
-                    shrink=bg.shrink,
-                    defringe=bg.defringe,
-                )
-            else:  # remove
-                current = apply_background_remove(current, mask)
-            if current.ndim == 3 and current.shape[2] == 4:
-                # Background removal gives transparency: carry it alongside and put it back at the end, so the
-                # selection tools, face swap, grain, upscale and filters all see plain BGR.
-                alpha_keep = current[:, :, 3]
-                current = current[:, :, :3]
-
-        # 1c. Selection tool (remove object / tattoo / blur an area), painted or tapped on the photo
+        edits: list[tuple[EditRequest, np.ndarray | None]] = []
         if request.edit.kind != "none":
-            if edit_mask is None:
-                raise ProcessingError("the selection tool needs an edit_mask")
-            from app.pipeline.edit import apply_edit
+            edits.append((request.edit, edit_mask))
+        masks = list(edit_masks or [])
+        for i, e in enumerate(request.edits):
+            if e.kind != "none":
+                edits.append((e, masks[i] if i < len(masks) else None))
 
-            current = apply_edit(current, edit_mask, request.edit)
-
-        # 1d. Face replacement (after background and selection tools; grain/filters then unify the pasted face)
-        if request.face.enabled:
-            if face_donor is None:
-                raise ProcessingError("face replacement needs a donor photo")
-            from app.models.face import get_face_engine
-
-            f = request.face
-            before_face = current
-            current = get_face_engine().swap(
-                current,
-                face_donor,
-                target_index=f.target,
-                donor_index=f.donor,
-                blend=f.blend,
-                color_match=f.color_match,
-                restore=f.restore,
-                hair=f.hair,
-                shape=f.shape,
-                detail=f.detail,
-                extra_donors=face_donors_extra or [],
-                all_faces=f.all_faces,
-                texture=f.texture,
-            )
-            if face_keep is not None:
-                from app.pipeline.face import keep_original
-
-                k = face_keep[:, :, 0] if face_keep.ndim == 3 else face_keep
-                current = keep_original(current, before_face, k)
-
-        # 3. Grain
-        if request.grain.enabled:
-            current, grain_only = apply_grain(current, request.grain.intensity)
-
-        # 4. Upscale (run before filters for cleaner result)
-        if request.upscale.enabled and request.upscale.scale > 1:
-            algorithm = None if request.upscale.algorithm == "interp" else request.upscale.algorithm
-            if algorithm is None:
-                # Fast LANCZOS4 path — no model required
-                upscaled_out = cv2.resize(
-                    current,
-                    None,
-                    fx=request.upscale.scale,
-                    fy=request.upscale.scale,
-                    interpolation=cv2.INTER_LANCZOS4,
-                )
+        stages = _stages(
+            request,
+            background_mask,
+            background_image,
+            matte,
+            face_donor,
+            face_donors_extra,
+            face_keep,
+            edits,
+        )
+        state: dict = {
+            "current": original.copy(),
+            "alpha": None,
+            "mask_debug": None,
+            "grain_only": None,
+            "upscaled": None,
+            "notes": [],
+        }
+        steps: list[dict] = []
+        key = _digest(original)
+        names = [s.name for s in stages]
+        for i, stage in enumerate(stages):
+            key = _digest(key, stage.name, stage.key)
+            if progress is not None:
+                progress({"steps": names, "done": i, "current": stage.name})
+            started = time.perf_counter()
+            hit = None
+            if use_cache:
+                with _cache_lock:
+                    hit = _cache.get(key)
+                    if hit is not None:
+                        _cache.move_to_end(key)
+            if hit is not None:
+                state = _snapshot(hit)
             else:
-                upscaled_out = upscale(current, request.upscale.scale, algorithm)
-            current = upscaled_out
-
-        # 5. Filters (only on BGR — split BGRA if background_remove was used)
-        if request.filters.enabled:
-            if current.ndim == 3 and current.shape[2] == 4:
-                # Drop alpha for filters, reattach at end
-                bgr = current[:, :, :3]
-                alpha = current[:, :, 3]
-            else:
-                bgr = current
-                alpha = None
-
-            bgr = apply_color_adjustments(
-                bgr,
-                brightness=request.filters.brightness,
-                contrast=request.filters.contrast,
-                saturation=request.filters.saturation,
-                sharpness=request.filters.sharpness,
+                stage.run(state)
+                if use_cache:
+                    with _cache_lock:
+                        _cache[key] = _snapshot(state)
+                        while len(_cache) > _CACHE_MAX:
+                            _cache.popitem(last=False)
+            steps.append(
+                {
+                    "name": stage.name,
+                    "seconds": round(time.perf_counter() - started, 2),
+                    "cached": hit is not None,
+                }
             )
-            if request.filters.vignette_strength > 0:
-                bgr = add_vignette(bgr, request.filters.vignette_strength)
-            if request.filters.sepia:
-                bgr = apply_sepia(bgr)
-            if request.filters.grayscale_blend > 0:
-                bgr = apply_grayscale(bgr, request.filters.grayscale_blend)
-            if request.filters.anime:
-                bgr = apply_anime_style(bgr, request.filters.anime_style)
-            if request.filters.painting:
-                bgr = apply_paint_style(bgr, request.filters.painting_style)
+        if progress is not None:
+            progress({"steps": names, "done": len(stages), "current": None})
 
-            current = np.dstack([bgr, alpha]) if alpha is not None else bgr
-
+        current = state["current"]
+        alpha_keep = state["alpha"]
+        mask_debug = state["mask_debug"]
+        grain_only = state["grain_only"]
+        upscaled_out = state["upscaled"]
         if alpha_keep is not None:
             if alpha_keep.shape != current.shape[:2]:
                 alpha_keep = cv2.resize(
@@ -278,6 +437,8 @@ def process_pipeline(
             mask=mask_debug,
             upscaled=upscaled_out,
             grain_only=grain_only,
+            steps=steps,
+            notes=state["notes"],
         )
     except (ProcessingError, ValidationError):
         raise  # ValidationError keeps its 422 (e.g. no face found in the donor photo)

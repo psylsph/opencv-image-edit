@@ -686,3 +686,23 @@ def test_defringe_setting_is_validated(test_client: TestClient):
         data={"settings": json.dumps(bad)},
     )
     assert r.status_code == 422
+
+
+def test_process_reports_steps_and_progress(test_client):
+    import json as _json
+
+    import cv2 as _cv2
+    import numpy as _np
+
+    png = _cv2.imencode(".png", _np.full((40, 30, 3), 90, _np.uint8))[1].tobytes()
+    settings = {"grain": {"enabled": True}, "filters": {"enabled": True, "sepia": True}}
+    r = test_client.post(
+        "/api/v1/process",
+        files={"file": ("a.png", png, "image/png")},
+        data={"settings": _json.dumps(settings), "job": "job-1"},
+    )
+    assert r.status_code == 200, r.text
+    assert [s["name"] for s in r.json()["steps"]] == ["Grain", "Filters"]
+    p = test_client.get("/api/v1/progress/job-1").json()
+    assert p["done"] == 2 and p["current"] is None and p["steps"] == ["Grain", "Filters"]
+    assert test_client.get("/api/v1/progress/nope").status_code == 404

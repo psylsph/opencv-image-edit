@@ -353,3 +353,8 @@ keep-original brush, a safeguard when the parser blanks the whole face, and mirr
 tattoo / blur area, via `edit` + `edit_mask` on `/api/v1/process`) -> face swap -> grain -> upscale -> filters. Background
 removal goes first so every later step sees the finished backdrop; its transparency is carried alongside and put back at the end.
 Before this the selection tools ran alone and ignored any other enabled step.
+
+**1.22.0:** stage cache (the result after each stage is kept for the last 16 runs, keyed by the photo and every setting/upload
+up to that stage, so changing grain or a filter reuses the background, tools and face swap); several selection tools in one
+run, each with its own selection (`edits` + repeated `edit_masks`); live progress (`job` form field, `GET /api/v1/progress/{job}`);
+per-step timings and tool notes (`steps`, `notes`) in the response. `/process` now runs in a worker thread.

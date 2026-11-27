@@ -27,6 +27,7 @@ const state = {
   live: { renderer: null, image: null, raf: 0, token: 0, matteKey: null, matteBusy: null, matteFailed: null },  // on-device preview (gl.js)
   lastResult: null,
   inpaintResult: null,   // separate from main process result
+  selections: {},        // tool -> its saved selection while another tool has the canvas
   // Mask canvas drawing state
   mask: {
     enabled: false,
@@ -247,19 +248,31 @@ function bindEvents() {
   // Inpaint (object removal) and Blur Area share one selection canvas + toolbar
   // (also used by Background "Paint BG"); only one of the two groups owns it.
   const OWNERS = ["inpaint", "blur", "tattoo", "facekeep"];
+  // Several tools can be on at once; each keeps its own selection. The canvas shows the one whose group is open.
   for (const owner of OWNERS) {
+    const group = $(owner === "facekeep" ? "#face-group" : `#${owner}-group`);
+    group.addEventListener("toggle", () => {
+      if (group.open && $(`#${owner}-enabled`).checked && !(state.mask.enabled && state.mask.owner === owner)) {
+        switchOwner(owner);
+        updateMaskCanvasVisibility();
+      }
+    });
     $(`#${owner}-enabled`).addEventListener("change", (e) => {
-      const group = $(owner === "facekeep" ? "#face-group" : `#${owner}-group`);
       if (e.target.checked) {
-        for (const other of OWNERS) if (other !== owner) $(`#${other}-enabled`).checked = false;
-        clearClickSelection();
-        state.mask.owner = owner;
-        state.mask.enabled = true;
-        setMaskMode(state.mask.mode);
+        switchOwner(owner);
         group.open = true;
-      } else if (state.mask.owner === owner) {
-        state.mask.enabled = false;
-        clearClickSelection(isBackgroundPaintActive());
+      } else {
+        delete state.selections[owner];
+        if (state.mask.enabled && state.mask.owner === owner) {
+          state.mask.enabled = false;
+          clearClickSelection(isBackgroundPaintActive());
+          const next = OWNERS.find((o) => $(`#${o}-enabled`).checked);
+          if (next) {
+            state.mask.owner = next;
+            state.mask.enabled = true;
+            restoreSelection(next);
+          }
+        }
       }
       updateMaskCanvasVisibility();
       updateBackgroundMaskControls();
@@ -290,6 +303,11 @@ function bindEvents() {
     clearMask();
     clearClickSelection();
     updateMaskCanvasVisibility();
+  });
+
+  // The Process button names the tool when it is the only thing that will run; any other step switched on changes that.
+  document.addEventListener("change", (e) => {
+    if (e.target instanceof HTMLInputElement && e.target.id.endsWith("-enabled")) updateProcessButton();
   });
 
   // Accordion: only one control group open at a time (keeps the page short)
@@ -487,6 +505,62 @@ async function loadBgIntoRenderer() {
   scheduleLiveDraw();
 }
 
+// --- one saved selection per tool -------------------------------------------------------------------------------
+// The selection canvas belongs to one tool at a time; the others' selections wait here until their group is opened
+// again, and are sent along when Process runs.
+const EDIT_TOOLS = ["inpaint", "tattoo", "blur"];  // the order the server runs them in
+
+function saveSelection(owner) {
+  const c = $("#mask-canvas");
+  if (!state.mask.ctx || !c.width || !c.height) return;
+  state.selections[owner] = {
+    mode: state.mask.mode,
+    detected: state.mask.detectedMask,
+    image: state.mask.ctx.getImageData(0, 0, c.width, c.height),
+    dirty: state.mask.isDirty,
+  };
+}
+
+function restoreSelection(owner) {
+  const saved = state.selections[owner];
+  delete state.selections[owner];
+  setMaskMode(saved ? saved.mode : state.mask.mode);  // also clears the canvas
+  if (!saved || !state.mask.ctx) return;
+  const c = $("#mask-canvas");
+  if (saved.image.width === c.width && saved.image.height === c.height) state.mask.ctx.putImageData(saved.image, 0, 0);
+  state.mask.detectedMask = saved.detected;
+  state.mask.isDirty = saved.dirty;
+}
+
+function switchOwner(owner) {
+  if (state.mask.enabled && state.mask.owner === owner) return;
+  if (state.mask.enabled) saveSelection(state.mask.owner);
+  state.mask.owner = owner;
+  state.mask.enabled = true;
+  restoreSelection(owner);
+}
+
+function savedHasContent(sel) {
+  if (sel.mode === "click") return !!sel.detected;
+  if (!sel.dirty) return false;
+  const d = sel.image.data;
+  for (let i = 3; i < d.length; i += 4) if (d[i] > 0) return true;
+  return false;
+}
+
+/** The selection of ``owner`` as a full-size PNG (white = selected), whether it's on the canvas or saved; or null. */
+async function selectionBlob(owner) {
+  if (state.mask.enabled && state.mask.owner === owner) return hasMaskContent() ? await getMaskPngBlob() : null;
+  const sel = state.selections[owner];
+  if (!sel || !savedHasContent(sel)) return null;
+  if (sel.mode === "click") return await (await fetch(sel.detected)).blob();
+  const tmp = document.createElement("canvas");
+  tmp.width = sel.image.width;
+  tmp.height = sel.image.height;
+  tmp.getContext("2d").putImageData(sel.image, 0, 0);
+  return await getPaintedMaskPngBlob(tmp);
+}
+
 function isBackgroundPaintActive() {
   const bgEnabled = $("#bg-enabled")?.checked;
   const source = document.querySelector("input[name='bg-source']:checked")?.value || "auto";
@@ -590,6 +664,7 @@ function loadFile(file) {
   setStatus("");
   state.lastResult = null;
   state.inpaintResult = null;
+  state.selections = {};
 
   updateProcessButton();
 }
@@ -647,6 +722,7 @@ function clearFile() {
   setStatus("");
   state.lastResult = null;
   state.inpaintResult = null;
+  state.selections = {};
   // Reset mask state
   state.mask.imageW = 0;
   state.mask.imageH = 0;
@@ -663,7 +739,9 @@ function updateProcessButton() {
   if (state.processing) {
     btn.textContent = "⏳ Processing…";
   } else {
-    const tool = activeTool();
+    const others = ["#face-enabled", "#bg-enabled", "#grain-enabled", "#upscale-enabled", "#filters-enabled"].some((sel) => $(sel)?.checked);
+    const tools = EDIT_TOOLS.filter((t) => $(`#${t}-enabled`)?.checked).length;
+    const tool = others || tools > 1 ? null : activeTool();
     btn.textContent = tool === "blur" ? "💧 Apply blur" : tool === "inpaint" ? "✂️ Remove object" : tool === "tattoo" ? "🩹 Remove tattoo" : "🚀 Process";
   }
 }
@@ -1247,8 +1325,7 @@ function undoMaskStroke() {
 
 /** Returns a Promise<Blob> PNG of the painted mask at original image resolution.
  *  Transparent/black = keep, white = selected. */
-async function getPaintedMaskPngBlob() {
-  const displayCanvas = $("#mask-canvas");
+async function getPaintedMaskPngBlob(displayCanvas = $("#mask-canvas")) {
   const out = document.createElement("canvas");
   out.width = state.mask.imageW;
   out.height = state.mask.imageH;
@@ -1395,6 +1472,11 @@ function setMaskMode(mode) {
   }
 }
 
+/** "Background ✓ → Remove tattoo… → Face swap" for the progress line. */
+function progressLine(steps, done) {
+  return steps.map((n, i) => (i < done ? `${n} ✓` : i === done ? `${n}…` : n)).join(" → ");
+}
+
 async function processImage() {
   if (!state.file || state.processing) return;
   state.processing = true;
@@ -1405,37 +1487,40 @@ async function processImage() {
   const formData = new FormData();
   formData.append("file", state.file);
 
-  // A selection tool (remove object / tattoo / blur an area) is just another step of the same run: the server does
-  // background first, then the tool, then the face swap, grain, upscale and filters.
-  const toolKind = state.mask.enabled ? { inpaint: "inpaint", tattoo: "tattoo", blur: "blur" }[state.mask.owner] : null;
-  if (toolKind) {
-    if (hasMaskContent()) {
-      try {
-        formData.append("edit_mask", await getMaskPngBlob(), "mask.png");
-      } catch (err) {
-        setStatus(`Error preparing mask: ${err.message}`, "error");
-        state.processing = false;
-        updateProcessButton();
-        return;
-      }
-      settings.edit = {
-        kind: toolKind,
-        algorithm: toolKind === "inpaint" ? document.querySelector("input[name='inpaint-algo']:checked").value : "lama",
-        radius: parseInt($("#inpaint-radius").value, 10),
-        iterations: parseInt($("#inpaint-iterations").value, 10),
-        strength: parseFloat($("#tattoo-strength").value),
-        grow: parseFloat($("#tattoo-grow").value),
-        blur_strength: parseInt($("#blur-area-strength").value, 10),
-        target: document.querySelector("input[name='blur-target']:checked").value,
-      };
-    } else if (toolKind !== "inpaint" && !(settings.face.enabled || settings.background.enabled || settings.grain.enabled || settings.upscale.enabled || settings.filters.enabled)) {
-      setStatus(toolKind === "tattoo"
-        ? "Select the tattoo first: tap it or paint over it."
-        : "Select an area to blur first: tap an object or paint it.", "error");
+  // The selection tools (remove object / tattoo / blur an area) are steps of the same run: the server does the
+  // background first, then each tool in turn, then the face swap, grain, upscale and filters.
+  const skipped = [];
+  settings.edits = [];
+  for (const t of EDIT_TOOLS) {
+    if (!$(`#${t}-enabled`).checked) continue;
+    let blob;
+    try {
+      blob = await selectionBlob(t);
+    } catch (err) {
+      setStatus(`Error preparing the selection: ${err.message}`, "error");
       state.processing = false;
       updateProcessButton();
       return;
     }
+    if (!blob) { skipped.push(TOOL_LABELS[t].title.replace(/^\S+\s/, "")); continue; }
+    formData.append("edit_masks", blob, `${t}.png`);
+    settings.edits.push({
+      kind: t,
+      algorithm: t === "inpaint" ? document.querySelector("input[name='inpaint-algo']:checked").value : "lama",
+      radius: parseInt($("#inpaint-radius").value, 10),
+      iterations: parseInt($("#inpaint-iterations").value, 10),
+      strength: parseFloat($("#tattoo-strength").value),
+      grow: parseFloat($("#tattoo-grow").value),
+      blur_strength: parseInt($("#blur-area-strength").value, 10),
+      target: document.querySelector("input[name='blur-target']:checked").value,
+    });
+  }
+  const otherSteps = settings.face.enabled || settings.background.enabled || settings.grain.enabled || settings.upscale.enabled || settings.filters.enabled;
+  if (skipped.length && !settings.edits.length && !otherSteps) {
+    setStatus(`Select an area first (tap it or paint over it) for: ${skipped.join(", ")}.`, "error");
+    state.processing = false;
+    updateProcessButton();
+    return;
   }
   formData.append("settings", JSON.stringify(settings));
 
@@ -1463,9 +1548,10 @@ async function processImage() {
     }
     formData.append("face_donor", faceUi.donorFile, faceUi.donorFile.name || "face");
     for (const f of faceUi.extraFiles) formData.append("face_donor_extra", f, f.name || "face");
-    if (state.mask.enabled && state.mask.owner === "facekeep" && hasMaskContent()) {
+    if ($("#facekeep-enabled").checked) {
       try {
-        formData.append("face_keep", await getMaskPngBlob(), "face-keep.png");
+        const keep = await selectionBlob("facekeep");
+        if (keep) formData.append("face_keep", keep, "face-keep.png");
       } catch (err) {
         setStatus(`Error preparing the keep mask: ${err.message}`, "error");
         state.processing = false;
@@ -1494,10 +1580,23 @@ async function processImage() {
     }
   }
 
+  // Poll which step the server is on, so a long run shows "Background ✓ → Face swap…" instead of just waiting.
+  const job = Math.random().toString(36).slice(2, 12);
+  formData.append("job", job);
+  const poll = setInterval(async () => {
+    try {
+      const r = await fetch(`/api/v1/progress/${job}`);
+      if (!r.ok || !state.processing) return;
+      const p = await r.json();
+      if (p.current) setStatus(progressLine(p.steps, p.done));
+    } catch { /* the next poll will try again */ }
+  }, 700);
   let resp;
   try {
     resp = await fetch("/api/v1/process", { method: "POST", body: formData });
+    clearInterval(poll);
   } catch (networkErr) {
+    clearInterval(poll);
     console.error(networkErr);
     setStatus(`Network error: ${networkErr.message}`, "error");
     state.processing = false;
@@ -1535,7 +1634,11 @@ async function processImage() {
   const w = data.output_size && data.output_size.width;
   const h = data.output_size && data.output_size.height;
   const sizeStr = (w && h) ? ` · ${w}×${h}` : "";
-  setStatus(`Done in ${data.elapsed_seconds.toFixed(2)}s${sizeStr}`, "success");
+  const reused = (data.steps || []).filter((st) => st.cached).map((st) => st.name.toLowerCase());
+  const reusedStr = reused.length ? ` (reused ${reused.join(", ")})` : "";
+  const extra = [...(data.notes || [])];
+  if (skipped.length) extra.push(`Skipped ${skipped.join(", ")}: nothing selected.`);
+  setStatus(`Done in ${data.elapsed_seconds.toFixed(2)}s${sizeStr}${reusedStr}.${extra.length ? " " + extra.join(" ") : ""}`, "success");
   state.processing = false;
   updateProcessButton();
 }

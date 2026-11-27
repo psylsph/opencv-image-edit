@@ -119,3 +119,13 @@ def reset_model_caches() -> Iterator[None]:
     yield
     matting._singleton = None
     Upscaler.clear_cache()
+
+
+@pytest.fixture(autouse=True)
+def _clear_stage_cache() -> Iterator[None]:
+    """The API reuses stage results between runs; tests must not see each other's (stubs differ per test)."""
+    from app.pipeline import clear_stage_cache
+
+    clear_stage_cache()
+    yield
+    clear_stage_cache()

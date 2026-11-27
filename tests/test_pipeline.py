@@ -484,7 +484,7 @@ def test_background_runs_before_the_selection_tool_and_filters(monkeypatch):
 
     monkeypatch.setattr(P, "apply_background_blur", lambda img, m, s: (calls.append("bg"), img)[1])
     monkeypatch.setattr(
-        "app.pipeline.edit.apply_edit", lambda img, m, e: (calls.append("edit"), img)[1]
+        "app.pipeline.edit.apply_edit", lambda img, m, e: (calls.append("edit"), (img, None))[1]
     )
     monkeypatch.setattr(P, "apply_grain", lambda img, i: (calls.append("grain"), (img, None))[1])
     monkeypatch.setattr(
@@ -520,3 +520,60 @@ def test_background_removal_keeps_transparency_through_later_stages(monkeypatch)
     )
     out = process_pipeline(_bgr(64, 96), req).final
     assert out.shape == (96, 64, 4) and out[0, 0, 3] == 0 and out[48, 32, 3] == 255
+
+
+def test_stage_cache_reuses_earlier_stages(monkeypatch):
+    import app.pipeline as P
+
+    calls = []
+    monkeypatch.setattr(
+        P, "apply_background_blur", lambda img, m, s: (calls.append("bg"), img + 1)[1]
+    )
+    monkeypatch.setattr(
+        P,
+        "get_matting_model",
+        lambda n: type("M", (), {"predict": lambda s, i: np.ones(i.shape[:2], np.float32)})(),
+    )
+    img = _bgr(64, 96)
+    base = {"background": {"enabled": True, "mode": "blur"}, "grain": {"enabled": True}}
+    r1 = process_pipeline(img, ProcessRequest(**base), use_cache=True)
+    base["grain"]["intensity"] = 0.9  # only a late step changes
+    r2 = process_pipeline(img, ProcessRequest(**base), use_cache=True)
+    assert calls == ["bg"]  # background ran once
+    assert [s["cached"] for s in r2.steps] == [True, False]
+    assert [s["name"] for s in r1.steps] == ["Background", "Grain"]
+    process_pipeline(img + 2, ProcessRequest(**base), use_cache=True)  # a different photo: no reuse
+    assert calls == ["bg", "bg"]
+
+
+def test_several_selection_tools_run_in_order_and_report_progress(monkeypatch):
+    seen, progress = [], []
+    monkeypatch.setattr(
+        "app.pipeline.edit.apply_edit",
+        lambda img, m, e: (seen.append(e.kind), (img, "note " + e.kind))[1],
+    )
+    sel = np.full((96, 64), 255, np.uint8)
+    req = ProcessRequest(edits=[{"kind": "inpaint"}, {"kind": "blur"}])
+    r = process_pipeline(_bgr(64, 96), req, edit_masks=[sel, sel], progress=progress.append)
+    assert seen == ["inpaint", "blur"]
+    assert r.notes == ["note inpaint", "note blur"]
+    assert [p["current"] for p in progress] == ["Remove object", "Blur area", None]
+
+
+@pytest.mark.parametrize("kind", ["inpaint", "tattoo", "blur"])
+def test_apply_edit_returns_image_and_note_for_every_tool(kind, monkeypatch):
+    """Each real tool branch returns (image, note); a stubbed test once hid a branch returning a bare image."""
+    from app.api.schemas import EditRequest
+    from app.pipeline import edit as E
+
+    monkeypatch.setattr(E, "person_mask", lambda img: None)
+    monkeypatch.setattr(
+        E, "remove_tattoo_lama", lambda img, m, **k: (img.copy(), {"mode": "lama", "ink_pct": 0})
+    )
+    img = _bgr(64, 96)
+    sel = np.zeros((96, 64), np.uint8)
+    sel[30:50, 20:40] = 255
+    algo = "telea" if kind == "inpaint" else "lama"
+    out, note = E.apply_edit(img, sel, EditRequest(kind=kind, algorithm=algo))
+    assert out.shape == img.shape
+    assert (note is not None) == (kind == "tattoo")
