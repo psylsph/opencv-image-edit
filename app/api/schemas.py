@@ -74,9 +74,26 @@ class FiltersRequest(BaseModel):
     painting_style: Literal["oil", "painterly", "pointillism"] = "oil"
 
 
+class EditRequest(BaseModel):
+    """A selection tool (needs the ``edit_mask`` upload: white = the selected area). Runs right after the background."""
+
+    kind: Literal["none", "inpaint", "tattoo", "blur"] = "none"
+    # inpaint
+    algorithm: Literal["lama", "telea", "ns"] = "lama"
+    radius: int = Field(default=3, ge=1, le=100)
+    iterations: int = Field(default=2, ge=1, le=20)
+    # tattoo
+    strength: float = Field(default=1.0, ge=0.0, le=1.0)
+    grow: float = Field(default=0.5, ge=0.0, le=1.0)
+    # blur
+    blur_strength: int = Field(default=15, ge=1, le=50)
+    target: Literal["selection", "outside"] = "selection"
+
+
 class ProcessRequest(BaseModel):
     """Top-level request model that bundles all stage sub-requests together."""
 
+    edit: EditRequest = Field(default_factory=EditRequest)
     face: FaceRequest = Field(default_factory=FaceRequest)
     background: BackgroundRequest = Field(default_factory=BackgroundRequest)
     grain: GrainRequest = Field(default_factory=GrainRequest)

@@ -552,3 +552,24 @@ def remove_tattoo_lama(
 def remove_tattoo(img_bgr: np.ndarray, mask: np.ndarray, **kwargs) -> np.ndarray:
     """:func:`remove_tattoo_info` without the info."""
     return remove_tattoo_info(img_bgr, mask, **kwargs)[0]
+
+
+def person_mask(img):
+    """The person (foreground) from the matting model, as a 0/1 mask, or None if the model is unavailable.
+
+    Used to keep the tattoo tool off the backdrop: however skin-like a wall or curtain is, it is never sampled or painted.
+    """
+    try:
+        from app.models.matting import get_matting_model
+
+        alpha = get_matting_model("u2netp").predict(img)
+    except Exception:  # no model, or it failed: the tool still works, without the extra protection
+        return None
+    fg = (alpha > 0.4).astype(np.uint8)
+    if (
+        fg.mean() < 0.02
+    ):  # the model found no subject at all: do not let that blank out the whole photo
+        return None
+    return cv2.dilate(
+        fg, np.ones((3, 3), np.uint8), iterations=2
+    )  # keep a little margin at the person's edge

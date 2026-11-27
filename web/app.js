@@ -1401,24 +1401,42 @@ async function processImage() {
   updateProcessButton();
   setStatus("Processing…", "");
 
-  // Branch: if Remove Object is on AND the user has painted a mask, hit
-  // the dedicated /api/v1/inpaint endpoint (it accepts a separate mask file).
-  if (state.mask.enabled && state.mask.owner !== "facekeep" && hasMaskContent()) {
-    await ({ blur: processBlurArea, tattoo: processTattoo }[state.mask.owner] || processInpaint)();
-    return;
-  }
-  if (state.mask.enabled && (state.mask.owner === "blur" || state.mask.owner === "tattoo")) {
-    setStatus(state.mask.owner === "tattoo"
-      ? "Select the tattoo first: tap it or paint over it."
-      : "Select an area to blur first: tap an object or paint it.", "error");
-    state.processing = false;
-    updateProcessButton();
-    return;
-  }
-
   const settings = collectSettings();
   const formData = new FormData();
   formData.append("file", state.file);
+
+  // A selection tool (remove object / tattoo / blur an area) is just another step of the same run: the server does
+  // background first, then the tool, then the face swap, grain, upscale and filters.
+  const toolKind = state.mask.enabled ? { inpaint: "inpaint", tattoo: "tattoo", blur: "blur" }[state.mask.owner] : null;
+  if (toolKind) {
+    if (hasMaskContent()) {
+      try {
+        formData.append("edit_mask", await getMaskPngBlob(), "mask.png");
+      } catch (err) {
+        setStatus(`Error preparing mask: ${err.message}`, "error");
+        state.processing = false;
+        updateProcessButton();
+        return;
+      }
+      settings.edit = {
+        kind: toolKind,
+        algorithm: toolKind === "inpaint" ? document.querySelector("input[name='inpaint-algo']:checked").value : "lama",
+        radius: parseInt($("#inpaint-radius").value, 10),
+        iterations: parseInt($("#inpaint-iterations").value, 10),
+        strength: parseFloat($("#tattoo-strength").value),
+        grow: parseFloat($("#tattoo-grow").value),
+        blur_strength: parseInt($("#blur-area-strength").value, 10),
+        target: document.querySelector("input[name='blur-target']:checked").value,
+      };
+    } else if (toolKind !== "inpaint" && !(settings.face.enabled || settings.background.enabled || settings.grain.enabled || settings.upscale.enabled || settings.filters.enabled)) {
+      setStatus(toolKind === "tattoo"
+        ? "Select the tattoo first: tap it or paint over it."
+        : "Select an area to blur first: tap an object or paint it.", "error");
+      state.processing = false;
+      updateProcessButton();
+      return;
+    }
+  }
   formData.append("settings", JSON.stringify(settings));
 
   if (settings.background.enabled && settings.background.mode === "image") {
@@ -1518,194 +1536,6 @@ async function processImage() {
   const h = data.output_size && data.output_size.height;
   const sizeStr = (w && h) ? ` · ${w}×${h}` : "";
   setStatus(`Done in ${data.elapsed_seconds.toFixed(2)}s${sizeStr}`, "success");
-  state.processing = false;
-  updateProcessButton();
-}
-
-async function processInpaint() {
-  const radius = parseInt($("#inpaint-radius").value, 10);
-  const iterations = parseInt($("#inpaint-iterations").value, 10);
-  const algorithm = document.querySelector("input[name='inpaint-algo']:checked").value;
-
-  let maskBlob;
-  try {
-    maskBlob = await getMaskPngBlob();
-  } catch (err) {
-    setStatus(`Error preparing mask: ${err.message}`, "error");
-    state.processing = false;
-    updateProcessButton();
-    return;
-  }
-  if (!maskBlob) {
-    setStatus("Error: could not serialize mask", "error");
-    state.processing = false;
-    updateProcessButton();
-    return;
-  }
-
-  const formData = new FormData();
-  formData.append("file", state.file);
-  formData.append("mask", maskBlob, "mask.png");
-  formData.append("radius", String(radius));
-  formData.append("algorithm", algorithm);
-  if (algorithm === "lama") {
-    formData.append("iterations", String(iterations));
-  }
-
-  let resp;
-  try {
-    resp = await fetch("/api/v1/inpaint", { method: "POST", body: formData });
-  } catch (networkErr) {
-    setStatus(`Network error: ${networkErr.message}`, "error");
-    state.processing = false;
-    updateProcessButton();
-    return;
-  }
-
-  if (!resp.ok) {
-    let errMsg = `HTTP ${resp.status}`;
-    try {
-      const errBody = await resp.json();
-      errMsg = errBody.detail || errBody.message || errMsg;
-    } catch { /* ignore */ }
-    setStatus(`Error: ${errMsg}`, "error");
-    state.processing = false;
-    updateProcessButton();
-    return;
-  }
-
-  let data;
-  try {
-    data = await resp.json();
-  } catch (jsonErr) {
-    setStatus("Error: invalid JSON response", "error");
-    state.processing = false;
-    updateProcessButton();
-    return;
-  }
-
-  // Build a normal-looking result for renderOutputs
-  const w = data.output_size && data.output_size.width;
-  const h = data.output_size && data.output_size.height;
-  const wrapped = {
-    final: data.final,
-    output_size: data.output_size,
-    elapsed_seconds: data.elapsed_seconds ?? 0,
-  };
-  state.lastResult = wrapped;
-  state.inpaintResult = data;
-  renderOutputs(wrapped);
-  const sizeStr = (w && h) ? ` · ${w}×${h}` : "";
-  const secs = (data.elapsed_seconds ?? 0).toFixed(2);
-  setStatus(`Inpainted (${algorithm}, r=${radius}) in ${secs}s${sizeStr}`, "success");
-  state.processing = false;
-  updateProcessButton();
-}
-
-async function processTattoo() {
-  const strength = parseFloat($("#tattoo-strength").value);
-  const grow = parseFloat($("#tattoo-grow").value);
-  const fail = (msg) => {
-    setStatus(msg, "error");
-    state.processing = false;
-    updateProcessButton();
-  };
-  let maskBlob;
-  try {
-    maskBlob = await getMaskPngBlob();
-  } catch (err) {
-    return fail(`Error preparing mask: ${err.message}`);
-  }
-  if (!maskBlob) return fail("Error: could not serialize mask");
-
-  const formData = new FormData();
-  formData.append("file", state.file);
-  formData.append("mask", maskBlob, "mask.png");
-  formData.append("strength", String(strength));
-  formData.append("grow", String(grow));
-  setStatus("Removing the tattoo…");
-
-  let resp;
-  try {
-    resp = await fetch("/api/v1/tattoo", { method: "POST", body: formData });
-  } catch (networkErr) {
-    return fail(`Network error: ${networkErr.message}`);
-  }
-  if (!resp.ok) {
-    let errMsg = `HTTP ${resp.status}`;
-    try {
-      const errBody = await resp.json();
-      errMsg = errBody.detail || errBody.message || errMsg;
-    } catch { /* keep the status */ }
-    return fail(`Error: ${errMsg}`);
-  }
-  let data;
-  try {
-    data = await resp.json();
-  } catch {
-    return fail("Error: invalid JSON response");
-  }
-  state.lastResult = data;
-  renderOutputs(data);
-  const secs = (data.elapsed_seconds ?? 0).toFixed(1);
-  const msg = {
-    lama: `Tattoo removed in ${secs}s. If some is left, paint over it again (or a little closer around it) and run it once more.`,
-    detected: `Tattoo removed (${data.ink_pct}% of the painted area) in ${secs}s. If some is left, raise the sensitivity or paint a little closer around it.`,
-    none: "Found no tattoo ink in that area. Raise the sensitivity, or paint over the tattoo itself.",
-  }[data.mode] || `Tattoo removed in ${secs}s`;
-  setStatus(msg, data.mode === "none" ? "" : "success");
-  state.processing = false;
-  updateProcessButton();
-}
-
-async function processBlurArea() {
-  const strength = parseInt($("#blur-area-strength").value, 10);
-  const target = document.querySelector("input[name='blur-target']:checked").value;
-  const fail = (msg) => {
-    setStatus(msg, "error");
-    state.processing = false;
-    updateProcessButton();
-  };
-
-  let maskBlob;
-  try {
-    maskBlob = await getMaskPngBlob();
-  } catch (err) {
-    return fail(`Error preparing mask: ${err.message}`);
-  }
-  if (!maskBlob) return fail("Error: could not serialize mask");
-
-  const formData = new FormData();
-  formData.append("file", state.file);
-  formData.append("mask", maskBlob, "mask.png");
-  formData.append("strength", String(strength));
-  formData.append("target", target);
-
-  let resp;
-  try {
-    resp = await fetch("/api/v1/blur", { method: "POST", body: formData });
-  } catch (networkErr) {
-    return fail(`Network error: ${networkErr.message}`);
-  }
-  if (!resp.ok) {
-    let errMsg = `HTTP ${resp.status}`;
-    try {
-      const errBody = await resp.json();
-      errMsg = errBody.detail || errBody.message || errMsg;
-    } catch { /* ignore */ }
-    return fail(`Error: ${errMsg}`);
-  }
-  let data;
-  try {
-    data = await resp.json();
-  } catch {
-    return fail("Error: invalid JSON response");
-  }
-
-  state.lastResult = data;
-  renderOutputs(data);
-  const secs = (data.elapsed_seconds ?? 0).toFixed(2);
-  setStatus(`Blurred ${target === "outside" ? "everything else" : "selection"} (σ=${strength}) in ${secs}s`, "success");
   state.processing = false;
   updateProcessButton();
 }

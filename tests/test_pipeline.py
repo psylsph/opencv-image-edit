@@ -454,3 +454,69 @@ def test_pipeline_missing_matting_model_propagates_error():
             importlib.reload(orch)
     finally:
         matting._cache = saved_cache
+
+
+# ---------------------------------------------------------------------------
+# Order and combining: background first, then a selection tool, then the rest
+# ---------------------------------------------------------------------------
+
+
+def test_selection_tool_runs_as_a_pipeline_stage():
+    img = _bgr(64, 96)
+    sel = np.zeros((96, 64), np.uint8)
+    sel[20:50, 10:40] = 255
+    req = ProcessRequest(edit={"kind": "blur", "blur_strength": 25})
+    out = process_pipeline(img, req, edit_mask=sel).final
+    assert out.shape == img.shape and not np.array_equal(out, img)
+    assert np.array_equal(out[80:, 50:], img[80:, 50:])  # far from the selection: untouched
+
+
+def test_selection_tool_needs_a_mask():
+    from app.exceptions import ProcessingError
+
+    with pytest.raises(ProcessingError):
+        process_pipeline(_bgr(64, 96), ProcessRequest(edit={"kind": "inpaint"}))
+
+
+def test_background_runs_before_the_selection_tool_and_filters(monkeypatch):
+    calls = []
+    import app.pipeline as P
+
+    monkeypatch.setattr(P, "apply_background_blur", lambda img, m, s: (calls.append("bg"), img)[1])
+    monkeypatch.setattr(
+        "app.pipeline.edit.apply_edit", lambda img, m, e: (calls.append("edit"), img)[1]
+    )
+    monkeypatch.setattr(P, "apply_grain", lambda img, i: (calls.append("grain"), (img, None))[1])
+    monkeypatch.setattr(
+        P,
+        "get_matting_model",
+        lambda n: type("M", (), {"predict": lambda s, i: np.ones(i.shape[:2], np.float32)})(),
+    )
+    req = ProcessRequest(
+        background={"enabled": True, "mode": "blur"},
+        edit={"kind": "blur"},
+        grain={"enabled": True},
+    )
+    process_pipeline(_bgr(64, 96), req, edit_mask=np.full((96, 64), 255, np.uint8))
+    assert calls == ["bg", "edit", "grain"]
+
+
+def test_background_removal_keeps_transparency_through_later_stages(monkeypatch):
+    import app.pipeline as P
+
+    monkeypatch.setattr(
+        P,
+        "get_matting_model",
+        lambda n: type(
+            "M",
+            (),
+            {"predict": lambda s, i: np.pad(np.ones((48, 32), np.float32), ((24, 24), (16, 16)))},
+        )(),
+    )
+    req = ProcessRequest(
+        background={"enabled": True, "mode": "remove"},
+        grain={"enabled": True},
+        filters={"enabled": True, "sepia": True},
+    )
+    out = process_pipeline(_bgr(64, 96), req).final
+    assert out.shape == (96, 64, 4) and out[0, 0, 3] == 0 and out[48, 32, 3] == 255

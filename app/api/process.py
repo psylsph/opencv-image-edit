@@ -40,6 +40,7 @@ async def process(
     face_donor: UploadFile | None = File(default=None),
     face_donor_extra: list[UploadFile] = File(default=[]),  # noqa: B008
     face_keep: UploadFile | None = File(default=None),
+    edit_mask: UploadFile | None = File(default=None),
 ) -> dict:
     """Process an uploaded image through the pipeline.
 
@@ -128,6 +129,19 @@ async def process(
                 raise HTTPException(status_code=400, detail=f"invalid keep mask: {exc}") from exc
             keep_img = keep_img[:, :, 0] if keep_img.ndim == 3 else keep_img
 
+    edit_img = None
+    if req.edit.kind != "none":
+        if edit_mask is None:
+            raise HTTPException(
+                status_code=422, detail="the selection tool needs an edit_mask file"
+            )
+        try:
+            edit_img = decode_to_bgr(await read_image_bytes(edit_mask))
+        except DecodeError as exc:
+            image_process_total.labels(status="decode_error").inc()
+            raise HTTPException(status_code=400, detail=f"invalid selection mask: {exc}") from exc
+        edit_img = edit_img[:, :, 0] if edit_img.ndim == 3 else edit_img
+
     started = time.perf_counter()
     status = "ok"
     try:
@@ -140,6 +154,7 @@ async def process(
             face_donor=donor_img,
             face_donors_extra=extra_imgs,
             face_keep=keep_img,
+            edit_mask=edit_img,
         )
     except AppError as exc:
         status = "processing_error"

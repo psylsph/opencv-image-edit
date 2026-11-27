@@ -14,31 +14,11 @@ from app.api._common import read_image_bytes
 from app.exceptions import DecodeError, ModelNotFoundError, ValidationError
 from app.monitoring import image_process_seconds, image_process_total
 from app.pipeline.io import decode_to_bgr, encode_png
+from app.pipeline.tattoo import person_mask as _person_mask
 from app.pipeline.tattoo import remove_tattoo_info, remove_tattoo_lama
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-
-def _person_mask(img):
-    """The person (foreground) from the matting model, as a 0/1 mask, or None if the model is unavailable.
-
-    Used to keep the tattoo tool off the backdrop: however skin-like a wall or curtain is, it is never sampled or painted.
-    """
-    try:
-        from app.models.matting import get_matting_model
-
-        alpha = get_matting_model("u2netp").predict(img)
-    except Exception:  # no model, or it failed: the tool still works, without the extra protection
-        return None
-    fg = (alpha > 0.4).astype(np.uint8)
-    if (
-        fg.mean() < 0.02
-    ):  # the model found no subject at all: do not let that blank out the whole photo
-        return None
-    return cv2.dilate(
-        fg, np.ones((3, 3), np.uint8), iterations=2
-    )  # keep a little margin at the person's edge
 
 
 @router.post("/api/v1/tattoo")

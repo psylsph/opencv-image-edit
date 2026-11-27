@@ -715,7 +715,7 @@ class TestApi:
         r = self._post(test_client)
         assert r.status_code == 422 and "no face found in the donor photo" in r.text
 
-    def test_face_runs_before_background(self, test_client: TestClient, monkeypatch):
+    def test_background_runs_before_face(self, test_client: TestClient, monkeypatch):
         order = []
         monkeypatch.setattr(self.engine, "swap", lambda t, d, **k: (order.append("face"), t)[1])
 
@@ -734,4 +734,4 @@ class TestApi:
         r = test_client.post(
             "/api/v1/process", files=files, data={"settings": json.dumps(settings)}
         )
-        assert r.status_code == 200 and order == ["face", "matting"]
+        assert r.status_code == 200 and order == ["matting", "face"]

@@ -348,3 +348,8 @@ Risks and limits:
 **1.20.0 (face swap):** several photos of the new face (identity averaged, photos of someone else are ignored), *Replace every
 face*, *Skin detail* (the restorer's high frequencies only, so the likeness is not pulled toward a generic face), the
 keep-original brush, a safeguard when the parser blanks the whole face, and mirror-averaged ArcFace readings.
+
+**1.21.0 (combining tools):** one run now does everything in a fixed order: background -> selection tool (remove object /
+tattoo / blur area, via `edit` + `edit_mask` on `/api/v1/process`) -> face swap -> grain -> upscale -> filters. Background
+removal goes first so every later step sees the finished backdrop; its transparency is carried alongside and put back at the end.
+Before this the selection tools ran alone and ignored any other enabled step.

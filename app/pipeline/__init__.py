@@ -1,6 +1,6 @@
 """Image processing pipeline orchestrator.
 
-Chains stages in fixed order: pre-process → face → background → grain → upscale → filters.
+Chains stages in fixed order: pre-process → background → selection tool → face → grain → upscale → filters.
 Each stage can be individually enabled/disabled via the ProcessRequest.
 """
 
@@ -58,6 +58,7 @@ def process_pipeline(
     face_donor: Optional[np.ndarray] = None,
     face_donors_extra: Optional[list] = None,
     face_keep: Optional[np.ndarray] = None,
+    edit_mask: Optional[np.ndarray] = None,
 ) -> ProcessResult:
     """Run the full processing pipeline.
 
@@ -70,6 +71,7 @@ def process_pipeline(
         face_donor: BGR photo whose face replaces one in the image when ``face.enabled``.
         face_donors_extra: more photos of the same person; the identity is averaged over them.
         face_keep: optional grayscale mask (255 = put the original pixels back over the swapped face, e.g. a hand).
+        edit_mask: selection for ``request.edit`` (non-zero = selected area).
         matte: optional 8-bit grayscale subject matte from ``/api/v1/matte`` (255 = subject); skips the model.
 
     Returns:
@@ -92,37 +94,10 @@ def process_pipeline(
         current = original.copy()
         upscaled_out: np.ndarray | None = None
         mask_debug: np.ndarray | None = None
+        alpha_keep: np.ndarray | None = None
         grain_only: np.ndarray | None = None
 
-        # 1b. Face replacement (before background/grain/filters so those unify the pasted face)
-        if request.face.enabled:
-            if face_donor is None:
-                raise ProcessingError("face replacement needs a donor photo")
-            from app.models.face import get_face_engine
-
-            f = request.face
-            current = get_face_engine().swap(
-                current,
-                face_donor,
-                target_index=f.target,
-                donor_index=f.donor,
-                blend=f.blend,
-                color_match=f.color_match,
-                restore=f.restore,
-                hair=f.hair,
-                shape=f.shape,
-                detail=f.detail,
-                extra_donors=face_donors_extra or [],
-                all_faces=f.all_faces,
-                texture=f.texture,
-            )
-            if face_keep is not None:
-                from app.pipeline.face import keep_original
-
-                k = face_keep[:, :, 0] if face_keep.ndim == 3 else face_keep
-                current = keep_original(current, original, k)
-
-        # 2. Background
+        # 1b. Background first: every later step then works on the finished backdrop (and is quicker/easier)
         if request.background.enabled:
             if background_mask is not None:
                 mask = background_paint_mask_to_foreground_alpha(background_mask, current.shape)
@@ -157,6 +132,48 @@ def process_pipeline(
                 )
             else:  # remove
                 current = apply_background_remove(current, mask)
+            if current.ndim == 3 and current.shape[2] == 4:
+                # Background removal gives transparency: carry it alongside and put it back at the end, so the
+                # selection tools, face swap, grain, upscale and filters all see plain BGR.
+                alpha_keep = current[:, :, 3]
+                current = current[:, :, :3]
+
+        # 1c. Selection tool (remove object / tattoo / blur an area), painted or tapped on the photo
+        if request.edit.kind != "none":
+            if edit_mask is None:
+                raise ProcessingError("the selection tool needs an edit_mask")
+            from app.pipeline.edit import apply_edit
+
+            current = apply_edit(current, edit_mask, request.edit)
+
+        # 1d. Face replacement (after background and selection tools; grain/filters then unify the pasted face)
+        if request.face.enabled:
+            if face_donor is None:
+                raise ProcessingError("face replacement needs a donor photo")
+            from app.models.face import get_face_engine
+
+            f = request.face
+            before_face = current
+            current = get_face_engine().swap(
+                current,
+                face_donor,
+                target_index=f.target,
+                donor_index=f.donor,
+                blend=f.blend,
+                color_match=f.color_match,
+                restore=f.restore,
+                hair=f.hair,
+                shape=f.shape,
+                detail=f.detail,
+                extra_donors=face_donors_extra or [],
+                all_faces=f.all_faces,
+                texture=f.texture,
+            )
+            if face_keep is not None:
+                from app.pipeline.face import keep_original
+
+                k = face_keep[:, :, 0] if face_keep.ndim == 3 else face_keep
+                current = keep_original(current, before_face, k)
 
         # 3. Grain
         if request.grain.enabled:
@@ -207,6 +224,15 @@ def process_pipeline(
                 bgr = apply_paint_style(bgr, request.filters.painting_style)
 
             current = np.dstack([bgr, alpha]) if alpha is not None else bgr
+
+        if alpha_keep is not None:
+            if alpha_keep.shape != current.shape[:2]:
+                alpha_keep = cv2.resize(
+                    alpha_keep,
+                    (current.shape[1], current.shape[0]),
+                    interpolation=cv2.INTER_LINEAR,
+                )
+            current = np.dstack([current[:, :, :3], alpha_keep])
 
         # 6. Comparisons (always)
         # For before/after, use the preprocessed original (no alpha) for left side
