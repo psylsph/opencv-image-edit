@@ -29,6 +29,22 @@ _PROGRESS_MAX = 64
 _progress: dict[str, dict] = {}
 _progress_lock = Lock()
 
+# One pipeline run at a time: matting, face swap, LaMa and upscaling each hold large models and full-size images, and
+# two at once (a double tap, a second tab) could push the container past its memory limit. Later requests wait here
+# (in their worker thread, so progress polling keeps answering).
+_run_lock = Lock()
+
+
+def _run_one_at_a_time(job: str | None, *args, **kwargs) -> ProcessResult:
+    if not _run_lock.acquire(blocking=False):
+        if job:
+            _set_progress(job, {"steps": [], "done": 0, "current": None, "queued": True})
+        _run_lock.acquire()
+    try:
+        return process_pipeline(*args, **kwargs)
+    finally:
+        _run_lock.release()
+
 
 def _set_progress(job: str, info: dict) -> None:
     with _progress_lock:
@@ -190,7 +206,8 @@ async def process(
     status = "ok"
     try:
         result: ProcessResult = await run_in_threadpool(
-            process_pipeline,
+            _run_one_at_a_time,
+            job,
             img_bgr,
             req,
             background_mask=bg_mask_img,

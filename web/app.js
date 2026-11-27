@@ -518,6 +518,7 @@ function saveSelection(owner) {
     detected: state.mask.detectedMask,
     image: state.mask.ctx.getImageData(0, 0, c.width, c.height),
     dirty: state.mask.isDirty,
+    history: state.mask.history.slice(),  // so Undo still works after switching tools and back
   };
 }
 
@@ -527,9 +528,22 @@ function restoreSelection(owner) {
   setMaskMode(saved ? saved.mode : state.mask.mode);  // also clears the canvas
   if (!saved || !state.mask.ctx) return;
   const c = $("#mask-canvas");
-  if (saved.image.width === c.width && saved.image.height === c.height) state.mask.ctx.putImageData(saved.image, 0, 0);
+  if (saved.image.width === c.width && saved.image.height === c.height) {
+    state.mask.ctx.putImageData(saved.image, 0, 0);
+    state.mask.history = saved.history || [];
+  } else {
+    // The canvas was resized while another tool had it (rotation, window size): scale the selection instead of
+    // losing it. The undo steps were at the old size, so they go.
+    const tmp = document.createElement("canvas");
+    tmp.width = saved.image.width;
+    tmp.height = saved.image.height;
+    tmp.getContext("2d").putImageData(saved.image, 0, 0);
+    state.mask.ctx.drawImage(tmp, 0, 0, c.width, c.height);
+  }
   state.mask.detectedMask = saved.detected;
   state.mask.isDirty = saved.dirty;
+  // A tap result that arrived while this tool was in the background has no overlay drawn yet.
+  if (saved.mode === "click" && saved.detected && saved.overlayMissing) drawDetectedMaskOnCanvas(saved.detected);
 }
 
 function switchOwner(owner) {
@@ -1413,6 +1427,11 @@ async function runSegmentation(clientX, clientY) {
   formData.append("file", state.file);
   formData.append("x", String(imgX));
   formData.append("y", String(imgY));
+  // The user may open another tool (or load another photo) before the answer comes back; it must land on this one.
+  const owner = state.mask.owner;
+  const file = state.file;
+  const stillHere = () =>
+    state.file === file && state.mask.enabled && state.mask.owner === owner && state.mask.mode === "click";
   state.mask.segmenting = true;
   const statusEl = $("#sel-hint");
   statusEl.textContent = "Detecting… (this takes ~1s)";
@@ -1423,6 +1442,15 @@ async function runSegmentation(clientX, clientY) {
       throw new Error(body.detail || body.message || `HTTP ${resp.status}`);
     }
     const data = await resp.json();
+    if (!stillHere()) {
+      const saved = state.selections[owner];
+      if (state.file === file && saved && saved.mode === "click") {
+        saved.detected = data.mask;
+        saved.dirty = true;
+        saved.overlayMissing = true;
+      }
+      return;
+    }
     state.mask.detectedMask = data.mask;
     state.mask.detectionScore = data.score;
     drawDetectedMaskOnCanvas(data.mask);
@@ -1433,7 +1461,7 @@ async function runSegmentation(clientX, clientY) {
       `Selected ${areaPct}% of the image${borderText}. Press “${nextStep}”, or tap elsewhere to re-select.`;
   } catch (err) {
     setStatus(`Segmentation error: ${err.message}`, "error");
-    clearClickSelection();
+    if (stillHere()) clearClickSelection();
   } finally {
     state.mask.segmenting = false;
   }
@@ -1583,19 +1611,24 @@ async function processImage() {
   // Poll which step the server is on, so a long run shows "Background ✓ → Face swap…" instead of just waiting.
   const job = Math.random().toString(36).slice(2, 12);
   formData.append("job", job);
+  let polling = true;  // cleared when the run ends, so an answer still in flight can't overwrite "Done in …"
   const poll = setInterval(async () => {
     try {
       const r = await fetch(`/api/v1/progress/${job}`);
-      if (!r.ok || !state.processing) return;
+      if (!r.ok || !polling) return;
       const p = await r.json();
-      if (p.current) setStatus(progressLine(p.steps, p.done));
+      if (!polling) return;
+      if (p.queued) setStatus("Waiting for another run to finish…");
+      else if (p.current) setStatus(progressLine(p.steps, p.done));
     } catch { /* the next poll will try again */ }
   }, 700);
   let resp;
   try {
     resp = await fetch("/api/v1/process", { method: "POST", body: formData });
+    polling = false;
     clearInterval(poll);
   } catch (networkErr) {
+    polling = false;
     clearInterval(poll);
     console.error(networkErr);
     setStatus(`Network error: ${networkErr.message}`, "error");

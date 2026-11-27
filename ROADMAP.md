@@ -358,3 +358,10 @@ Before this the selection tools ran alone and ignored any other enabled step.
 up to that stage, so changing grain or a filter reuses the background, tools and face swap); several selection tools in one
 run, each with its own selection (`edits` + repeated `edit_masks`); live progress (`job` form field, `GET /api/v1/progress/{job}`);
 per-step timings and tool notes (`steps`, `notes`) in the response. `/process` now runs in a worker thread.
+
+**1.22.1:** review fixes. The stage cache is capped by memory (`STAGE_CACHE_MB`, default 768; 0 turns it off), stores an
+array shared by two keys once, and is emptied when idle models unload. Installed model files are part of the cache key.
+One `/process` run at a time (a second waits, progress says `queued`). `edit_masks` pair with the non-"none" edits in order.
+Page: a late progress poll can't overwrite "Done", a tap result lands on the tool that was tapped, a selection is scaled
+rather than lost when the canvas is resized, and Undo survives switching tools. Grain stays cached on purpose (same
+settings, same pattern). Known, older: EDSR/ESPCN upscaling fails under OpenCV 5.1 ("model_proto.has_graph()").

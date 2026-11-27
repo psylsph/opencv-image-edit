@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     # Model paths and lifecycle
     model_dir: Path = Path("./models")
     model_idle_timeout_seconds: int = Field(default=180, ge=1, le=3600)
+    # Memory the stage cache (earlier runs' intermediate images) may hold; 0 turns it off.
+    stage_cache_mb: int = Field(default=768, ge=0, le=8192)
 
     # Metrics
     enable_metrics: bool = True
@@ -46,7 +48,7 @@ class Settings(BaseSettings):
     grain_intensity_max: float = Field(default=1.0, gt=0.0, le=2.0)
 
     # App metadata
-    app_version: str = "1.22.0"
+    app_version: str = "1.22.1"
     app_name: str = "opencv-image-edit"
 
     @field_validator("log_level")

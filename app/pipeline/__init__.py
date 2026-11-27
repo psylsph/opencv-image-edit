@@ -7,6 +7,7 @@ Each stage can be individually enabled/disabled via the ProcessRequest.
 from __future__ import annotations
 
 import hashlib
+import os
 import time
 from collections import OrderedDict
 from collections.abc import Callable
@@ -63,13 +64,63 @@ class ProcessResult:
 # the background, selection tools and face swap instead of recomputing them (15-25 s -> about a second).
 
 _CACHE_MAX = 16
-_cache: "OrderedDict[str, dict]" = OrderedDict()
+_cache: "OrderedDict[str, tuple[dict, int]]" = OrderedDict()  # key -> (snapshot, bytes)
+_cache_bytes = 0
 _cache_lock = Lock()
 
 
 def clear_stage_cache() -> None:
+    global _cache_bytes
     with _cache_lock:
         _cache.clear()
+        _cache_bytes = 0
+
+
+def _cache_put(key: str, state: dict) -> None:
+    """Store a snapshot, evicting the oldest entries to stay within ``stage_cache_mb`` and ``_CACHE_MAX``."""
+    global _cache_bytes
+    budget = get_settings().stage_cache_mb * 1024 * 1024
+    snap = _snapshot(state)
+    size = _snapshot_bytes(snap)
+    if size > budget:
+        return  # one entry bigger than the whole budget (e.g. a huge upscale): don't cache it
+    with _cache_lock:
+        old = _cache.pop(key, None)
+        if old is not None:
+            _cache_bytes -= old[1]
+        _cache[key] = (snap, size)
+        _cache_bytes += size
+        while _cache and (len(_cache) > _CACHE_MAX or _cache_bytes > budget):
+            _, (_, freed) = _cache.popitem(last=False)
+            _cache_bytes -= freed
+
+
+def _cache_get(key: str) -> dict | None:
+    with _cache_lock:
+        hit = _cache.get(key)
+        if hit is None:
+            return None
+        _cache.move_to_end(key)
+        return hit[0]
+
+
+def _models_fingerprint() -> str:
+    """Names, sizes and dates of the installed model files, so copying a new model in invalidates cached results."""
+    root = get_settings().model_dir
+    entries = []
+    try:
+        for dirpath, _dirs, files in os.walk(root):
+            for name in files:
+                try:
+                    st = os.stat(os.path.join(dirpath, name))
+                except OSError:
+                    continue
+                entries.append(
+                    (os.path.relpath(os.path.join(dirpath, name), root), st.st_size, st.st_mtime_ns)
+                )
+    except OSError:
+        pass
+    return _digest(sorted(entries))
 
 
 def _digest(*parts) -> str:
@@ -89,10 +140,25 @@ def _digest(*parts) -> str:
 
 
 def _snapshot(state: dict) -> dict:
-    return {
-        k: (v.copy() if isinstance(v, np.ndarray) else list(v) if isinstance(v, list) else v)
-        for k, v in state.items()
-    }
+    """Copy the state; arrays shared by several keys (``current`` is ``upscaled`` after an upscale) stay shared."""
+    copies: dict[int, np.ndarray] = {}
+    out = {}
+    for k, v in state.items():
+        if isinstance(v, np.ndarray):
+            if id(v) not in copies:
+                copies[id(v)] = v.copy()
+            out[k] = copies[id(v)]
+        else:
+            out[k] = list(v) if isinstance(v, list) else v
+    return out
+
+
+def _snapshot_bytes(snap: dict) -> int:
+    seen: dict[int, int] = {}
+    for v in snap.values():
+        if isinstance(v, np.ndarray):
+            seen[id(v)] = v.nbytes
+    return sum(seen.values())
 
 
 @dataclass
@@ -219,6 +285,8 @@ def _stages(
         )
 
     if request.grain.enabled:
+        # Cached like the rest: the same grain settings give the same grain pattern, so tweaking a later filter
+        # doesn't make the noise jump around between runs. Changing the grain setting gives a new pattern.
 
         def run_grain(st):
             st["current"], st["grain_only"] = apply_grain(st["current"], request.grain.intensity)
@@ -323,10 +391,11 @@ def process_pipeline(
         edits: list[tuple[EditRequest, np.ndarray | None]] = []
         if request.edit.kind != "none":
             edits.append((request.edit, edit_mask))
-        masks = list(edit_masks or [])
-        for i, e in enumerate(request.edits):
+        # One mask per active (non-"none") tool, in order; "none" entries take no mask.
+        masks = iter(edit_masks or [])
+        for e in request.edits:
             if e.kind != "none":
-                edits.append((e, masks[i] if i < len(masks) else None))
+                edits.append((e, next(masks, None)))
 
         stages = _stages(
             request,
@@ -347,28 +416,22 @@ def process_pipeline(
             "notes": [],
         }
         steps: list[dict] = []
-        key = _digest(original)
+        use_cache = use_cache and get_settings().stage_cache_mb > 0
+        # The installed models are part of the key: adding GFPGAN, LaMa, ... must not return the older result.
+        key = _digest(original, _models_fingerprint() if use_cache else None)
         names = [s.name for s in stages]
         for i, stage in enumerate(stages):
             key = _digest(key, stage.name, stage.key)
             if progress is not None:
                 progress({"steps": names, "done": i, "current": stage.name})
             started = time.perf_counter()
-            hit = None
-            if use_cache:
-                with _cache_lock:
-                    hit = _cache.get(key)
-                    if hit is not None:
-                        _cache.move_to_end(key)
+            hit = _cache_get(key) if use_cache else None
             if hit is not None:
                 state = _snapshot(hit)
             else:
                 stage.run(state)
                 if use_cache:
-                    with _cache_lock:
-                        _cache[key] = _snapshot(state)
-                        while len(_cache) > _CACHE_MAX:
-                            _cache.popitem(last=False)
+                    _cache_put(key, state)
             steps.append(
                 {
                     "name": stage.name,

@@ -706,3 +706,37 @@ def test_process_reports_steps_and_progress(test_client):
     p = test_client.get("/api/v1/progress/job-1").json()
     assert p["done"] == 2 and p["current"] is None and p["steps"] == ["Grain", "Filters"]
     assert test_client.get("/api/v1/progress/nope").status_code == 404
+
+
+def test_process_runs_one_pipeline_at_a_time(monkeypatch):
+    """A second request waits (and says so in its progress) instead of running alongside the first."""
+    import threading
+
+    import app.api.process as proc
+
+    active, peak, release = [0], [0], threading.Event()
+    started = threading.Event()
+
+    def fake(*a, **k):
+        active[0] += 1
+        peak[0] = max(peak[0], active[0])
+        started.set()
+        release.wait(5)
+        active[0] -= 1
+        return "ok"
+
+    monkeypatch.setattr(proc, "process_pipeline", fake)
+    t1 = threading.Thread(target=proc._run_one_at_a_time, args=("j1",))
+    t1.start()
+    started.wait(5)
+    t2 = threading.Thread(target=proc._run_one_at_a_time, args=("j2",))
+    t2.start()
+    for _ in range(100):
+        if proc._progress.get("j2", {}).get("queued"):
+            break
+        threading.Event().wait(0.01)
+    assert proc._progress["j2"]["queued"] is True
+    release.set()
+    t1.join(5)
+    t2.join(5)
+    assert peak[0] == 1

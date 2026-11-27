@@ -577,3 +577,98 @@ def test_apply_edit_returns_image_and_note_for_every_tool(kind, monkeypatch):
     out, note = E.apply_edit(img, sel, EditRequest(kind=kind, algorithm=algo))
     assert out.shape == img.shape
     assert (note is not None) == (kind == "tattoo")
+
+
+def _counting_background(monkeypatch, calls):
+    import app.pipeline as P
+
+    monkeypatch.setattr(
+        P, "apply_background_blur", lambda img, m, s: (calls.append("bg"), img + 1)[1]
+    )
+    monkeypatch.setattr(
+        P,
+        "get_matting_model",
+        lambda n: type("M", (), {"predict": lambda s, i: np.ones(i.shape[:2], np.float32)})(),
+    )
+
+
+def test_none_entries_in_edits_take_no_mask(monkeypatch):
+    """Masks pair with the active tools in order, as the API counts them; a "none" entry takes none."""
+    seen = []
+    monkeypatch.setattr(
+        "app.pipeline.edit.apply_edit",
+        lambda img, m, e: (seen.append((e.kind, int(m[0, 0]))), (img, None))[1],
+    )
+    a, b = np.full((96, 64), 10, np.uint8), np.full((96, 64), 20, np.uint8)
+    req = ProcessRequest(
+        edits=[{"kind": "none"}, {"kind": "inpaint"}, {"kind": "none"}, {"kind": "blur"}]
+    )
+    process_pipeline(_bgr(64, 96), req, edit_masks=[a, b])
+    assert seen == [("inpaint", 10), ("blur", 20)]
+
+
+def test_stage_cache_stays_within_its_memory_budget(monkeypatch):
+    import app.pipeline as P
+    from app.config import get_settings
+
+    calls = []
+    _counting_background(monkeypatch, calls)
+    img = _bgr(64, 96)  # each snapshot ~18 KB (current + mask_debug)
+    monkeypatch.setattr(get_settings(), "stage_cache_mb", 1)
+    for i in range(16):
+        process_pipeline(
+            img + i, ProcessRequest(background={"enabled": True, "mode": "blur"}), use_cache=True
+        )
+    assert P._cache_bytes <= 1024 * 1024
+    assert P._cache_bytes == sum(size for _, size in P._cache.values())
+
+    big = _bgr(1024, 1024)  # 3 MB: larger than the whole budget, so it is not kept at all
+    P.clear_stage_cache()
+    process_pipeline(
+        big, ProcessRequest(background={"enabled": True, "mode": "blur"}), use_cache=True
+    )
+    assert len(P._cache) == 0 and P._cache_bytes == 0
+
+    monkeypatch.setattr(get_settings(), "stage_cache_mb", 0)  # 0 turns it off
+    process_pipeline(
+        img, ProcessRequest(background={"enabled": True, "mode": "blur"}), use_cache=True
+    )
+    assert len(P._cache) == 0
+
+
+def test_snapshot_keeps_shared_arrays_shared():
+    import app.pipeline as P
+
+    up = np.zeros((100, 100, 3), np.uint8)
+    snap = P._snapshot({"current": up, "upscaled": up, "notes": []})
+    assert snap["current"] is snap["upscaled"] and snap["current"] is not up
+    assert P._snapshot_bytes(snap) == up.nbytes  # counted once
+
+
+def test_installing_a_model_invalidates_cached_results(monkeypatch, tmp_path):
+    from app.config import get_settings
+
+    calls = []
+    _counting_background(monkeypatch, calls)
+    monkeypatch.setattr(get_settings(), "model_dir", tmp_path)
+    req = ProcessRequest(background={"enabled": True, "mode": "blur"})
+    img = _bgr(64, 96)
+    process_pipeline(img, req, use_cache=True)
+    process_pipeline(img, req, use_cache=True)
+    assert calls == ["bg"]
+    (tmp_path / "gfpgan.onnx").write_bytes(b"new model")
+    process_pipeline(img, req, use_cache=True)
+    assert calls == ["bg", "bg"]
+
+
+def test_unloading_idle_models_empties_the_stage_cache(monkeypatch):
+    import app.pipeline as P
+    from app.model_cache import clear_all_model_caches
+
+    _counting_background(monkeypatch, [])
+    process_pipeline(
+        _bgr(64, 96), ProcessRequest(background={"enabled": True, "mode": "blur"}), use_cache=True
+    )
+    assert P._cache
+    clear_all_model_caches()
+    assert not P._cache and P._cache_bytes == 0

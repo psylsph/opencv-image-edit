@@ -75,6 +75,9 @@ def clear_all_model_caches() -> None:
     Upscaler.clear_cache()
     clear_anime_cache()
     clear_paint_cache()
+    from app.pipeline import clear_stage_cache
+
+    clear_stage_cache()  # the cached intermediate images go too, or they would stay resident while idle
     gc.collect()
 
     # ONNX Runtime's CPU allocator may leave released arenas with glibc.
