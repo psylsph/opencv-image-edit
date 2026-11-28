@@ -16,6 +16,7 @@ from app.monitoring import image_process_seconds, image_process_total
 from app.pipeline.io import decode_to_bgr, encode_png
 from app.pipeline.tattoo import person_mask as _person_mask
 from app.pipeline.tattoo import remove_tattoo_info, remove_tattoo_lama
+from app.run_lock import BusyError, heavy
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -55,23 +56,24 @@ async def tattoo(
             status_code=422, detail="select the tattoo first (tap it or paint over it)"
         )
 
-    foreground = _person_mask(img)
-    started = time.perf_counter()
-    try:
-        info = None
+    def run():
+        foreground = _person_mask(img)
         if algorithm == "lama":
             try:
-                result, info = remove_tattoo_lama(
-                    img, mask_img, strength=strength, foreground=foreground
-                )
+                return remove_tattoo_lama(img, mask_img, strength=strength, foreground=foreground)
             except ModelNotFoundError:  # no LaMa model: fall back to the colour algorithm
                 logger.warning("tattoo: LaMa model missing, using the colour algorithm")
-        if info is None:
-            result, info = remove_tattoo_info(
-                img, mask_img, strength=strength, grow=grow, foreground=foreground
-            )
+        return remove_tattoo_info(
+            img, mask_img, strength=strength, grow=grow, foreground=foreground
+        )
+
+    started = time.perf_counter()
+    try:
+        result, info = await heavy(run)
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.message) from exc
+    except BusyError:
+        raise  # 503: another edit is running; the app's error handler answers it
     except Exception as exc:
         image_process_total.labels(status="tattoo_error").inc()
         raise HTTPException(status_code=500, detail=f"tattoo removal failed: {exc}") from exc

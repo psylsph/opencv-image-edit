@@ -708,16 +708,15 @@ def test_process_reports_steps_and_progress(test_client):
     assert test_client.get("/api/v1/progress/nope").status_code == 404
 
 
-def test_process_runs_one_pipeline_at_a_time(monkeypatch):
-    """A second request waits (and says so in its progress) instead of running alongside the first."""
+def test_heavy_requests_run_one_at_a_time_and_queued_ones_say_so(monkeypatch):
+    """A second request waits (its progress says queued) instead of running alongside the first."""
     import threading
 
     import app.api.process as proc
 
-    active, peak, release = [0], [0], threading.Event()
-    started = threading.Event()
+    active, peak, release, started = [0], [0], threading.Event(), threading.Event()
 
-    def fake(*a, **k):
+    def fake(*a, progress=None, **k):
         active[0] += 1
         peak[0] = max(peak[0], active[0])
         started.set()
@@ -726,17 +725,69 @@ def test_process_runs_one_pipeline_at_a_time(monkeypatch):
         return "ok"
 
     monkeypatch.setattr(proc, "process_pipeline", fake)
-    t1 = threading.Thread(target=proc._run_one_at_a_time, args=("j1",))
+    out = {}
+    t1 = threading.Thread(
+        target=lambda: out.update(a=proc._run_one_at_a_time("j1", threading.Event()))
+    )
     t1.start()
     started.wait(5)
-    t2 = threading.Thread(target=proc._run_one_at_a_time, args=("j2",))
+    t2 = threading.Thread(
+        target=lambda: out.update(b=proc._run_one_at_a_time("j2", threading.Event()))
+    )
     t2.start()
-    for _ in range(100):
+    for _ in range(200):
         if proc._progress.get("j2", {}).get("queued"):
             break
         threading.Event().wait(0.01)
     assert proc._progress["j2"]["queued"] is True
+    threading.Event().wait(0.3)
     release.set()
     t1.join(5)
     t2.join(5)
     assert peak[0] == 1
+    assert out["a"][0] == "ok" and out["a"][1] >= 0.25  # the first one ran for the whole wait
+    assert out["b"][1] < 0.2  # the second one's time excludes its time in the queue
+
+
+def test_an_abandoned_request_gives_up_its_place_in_the_queue():
+    import threading
+
+    import pytest as _pytest
+
+    from app.run_lock import BusyError, RunCancelledError, _lock, run_exclusive
+
+    _lock.acquire()
+    try:
+        cancel = threading.Event()
+        threading.Timer(0.3, cancel.set).start()
+        with _pytest.raises(RunCancelledError):
+            run_exclusive(lambda: "never", cancel=cancel)
+        with _pytest.raises(BusyError):
+            run_exclusive(lambda: "never", max_wait=0.3)
+    finally:
+        _lock.release()
+    assert run_exclusive(lambda: "ran")[0] == "ran"
+
+
+def test_a_cancelled_run_stops_between_stages(monkeypatch):
+    import threading
+
+    import pytest as _pytest
+
+    import app.api.process as proc
+    from app.run_lock import RunCancelledError
+
+    cancel = threading.Event()
+    ran = []
+
+    def fake(*a, progress=None, **k):
+        progress({"steps": ["A", "B"], "done": 0, "current": "A"})
+        ran.append("A")
+        cancel.set()  # the page went away during stage A
+        progress({"steps": ["A", "B"], "done": 1, "current": "B"})
+        ran.append("B")
+
+    monkeypatch.setattr(proc, "process_pipeline", fake)
+    with _pytest.raises(RunCancelledError):
+        proc._run_one_at_a_time("j3", cancel)
+    assert ran == ["A"]

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import re
 import time
-from threading import Lock
+from threading import Event, Lock
 
 import numpy as np
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from starlette.concurrency import run_in_threadpool
 
 from app.api._common import read_image_bytes
@@ -21,6 +22,7 @@ from app.monitoring import (
 )
 from app.pipeline import ProcessResult, process_pipeline
 from app.pipeline.io import decode_to_bgr, encode_png
+from app.run_lock import RunCancelledError, run_exclusive
 
 router = APIRouter()
 
@@ -29,21 +31,40 @@ _PROGRESS_MAX = 64
 _progress: dict[str, dict] = {}
 _progress_lock = Lock()
 
-# One pipeline run at a time: matting, face swap, LaMa and upscaling each hold large models and full-size images, and
-# two at once (a double tap, a second tab) could push the container past its memory limit. Later requests wait here
-# (in their worker thread, so progress polling keeps answering).
-_run_lock = Lock()
 
+def _run_one_at_a_time(
+    job: str | None, cancel: Event, *args, **kwargs
+) -> tuple[ProcessResult, float]:
+    """The pipeline under the shared run lock (``app.run_lock``). Returns ``(result, seconds it ran)``.
 
-def _run_one_at_a_time(job: str | None, *args, **kwargs) -> ProcessResult:
-    if not _run_lock.acquire(blocking=False):
+    A run whose page has gone away gives up its place in the queue, and stops between stages if it already started
+    (what finished stays in the stage cache, so a retry picks up from there).
+    """
+
+    def report(info: dict) -> None:
+        if cancel.is_set():
+            raise RunCancelledError("the request was cancelled")
+        if job:
+            _set_progress(job, info)
+
+    def queued() -> None:
         if job:
             _set_progress(job, {"steps": [], "done": 0, "current": None, "queued": True})
-        _run_lock.acquire()
-    try:
-        return process_pipeline(*args, **kwargs)
-    finally:
-        _run_lock.release()
+
+    def timed():
+        t = time.perf_counter()
+        return process_pipeline(*args, **kwargs, progress=report), time.perf_counter() - t
+
+    (result, ran), _waited = run_exclusive(timed, cancel=cancel, on_queued=queued)
+    return result, ran
+
+
+async def _watch_disconnect(request: Request, cancel: Event) -> None:
+    while not cancel.is_set():
+        if await request.is_disconnected():
+            cancel.set()
+            return
+        await asyncio.sleep(0.5)
 
 
 def _set_progress(job: str, info: dict) -> None:
@@ -76,6 +97,7 @@ def _to_b64_png(img: np.ndarray | None) -> str | None:
 
 @router.post("/api/v1/process")
 async def process(
+    request: Request,
     file: UploadFile = File(...),
     settings: str = Form(...),
     background_mask: UploadFile | None = File(default=None),
@@ -204,10 +226,13 @@ async def process(
 
     started = time.perf_counter()
     status = "ok"
+    cancel = Event()
+    watcher = asyncio.create_task(_watch_disconnect(request, cancel))
     try:
-        result: ProcessResult = await run_in_threadpool(
+        result, elapsed = await run_in_threadpool(
             _run_one_at_a_time,
             job,
+            cancel,
             img_bgr,
             req,
             background_mask=bg_mask_img,
@@ -219,14 +244,19 @@ async def process(
             edit_mask=edit_img,
             edit_masks=edit_imgs,
             use_cache=True,
-            progress=(lambda info: _set_progress(job, info)) if job else None,
         )
+    except RunCancelledError as exc:
+        image_process_total.labels(status="cancelled").inc()
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     except AppError as exc:
         status = "processing_error"
         image_process_total.labels(status=status).inc()
         image_process_seconds.labels(status=status).observe(time.perf_counter() - started)
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    elapsed = time.perf_counter() - started
+    finally:
+        cancel.set()  # also stops the watcher
+        watcher.cancel()
+    # ``elapsed`` is the run itself, not the time spent queued behind another one.
     image_process_seconds.labels(status=status).observe(elapsed)
     image_process_total.labels(status=status).inc()
 

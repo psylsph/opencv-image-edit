@@ -509,6 +509,7 @@ async function loadBgIntoRenderer() {
 // The selection canvas belongs to one tool at a time; the others' selections wait here until their group is opened
 // again, and are sent along when Process runs.
 const EDIT_TOOLS = ["inpaint", "tattoo", "blur"];  // the order the server runs them in
+const SAVED_UNDO_STEPS = 3;  // undo steps kept for a tool whose group isn't open
 
 function saveSelection(owner) {
   const c = $("#mask-canvas");
@@ -518,7 +519,11 @@ function saveSelection(owner) {
     detected: state.mask.detectedMask,
     image: state.mask.ctx.getImageData(0, 0, c.width, c.height),
     dirty: state.mask.isDirty,
-    history: state.mask.history.slice(),  // so Undo still works after switching tools and back
+    // So Undo still works after switching tools and back. Only the last few steps: each is a full-canvas
+    // ImageData (~7 MB on an iPhone), and four tools x 20 steps could get the tab killed.
+    history: state.mask.history.slice(-SAVED_UNDO_STEPS),
+    score: state.mask.detectionScore,
+    hint: $("#sel-hint").textContent,
   };
 }
 
@@ -541,7 +546,9 @@ function restoreSelection(owner) {
     state.mask.ctx.drawImage(tmp, 0, 0, c.width, c.height);
   }
   state.mask.detectedMask = saved.detected;
+  state.mask.detectionScore = saved.score || 0;
   state.mask.isDirty = saved.dirty;
+  if (saved.mode === "click" && saved.detected && saved.hint) $("#sel-hint").textContent = saved.hint;
   // A tap result that arrived while this tool was in the background has no overlay drawn yet.
   if (saved.mode === "click" && saved.detected && saved.overlayMissing) drawDetectedMaskOnCanvas(saved.detected);
 }
@@ -1408,6 +1415,13 @@ function drawDetectedMaskOnCanvas(dataUrl) {
   img.src = dataUrl;
 }
 
+function selectedHint(data, owner) {
+  const areaPct = (data.mask_area_pct * 100).toFixed(1);
+  const borderText = data.selection_border_px ? `, +${data.selection_border_px}px edge margin` : "";
+  const nextStep = { blur: "Apply blur", tattoo: "Remove tattoo", facekeep: "Process" }[owner] || "Remove object";
+  return `Selected ${areaPct}% of the image${borderText}. Press “${nextStep}”, or tap elsewhere to re-select.`;
+}
+
 async function runSegmentation(clientX, clientY) {
   if (state.mask.segmenting) return;
   // Convert client (display) coords to original image coords
@@ -1434,7 +1448,10 @@ async function runSegmentation(clientX, clientY) {
     state.file === file && state.mask.enabled && state.mask.owner === owner && state.mask.mode === "click";
   state.mask.segmenting = true;
   const statusEl = $("#sel-hint");
-  statusEl.textContent = "Detecting… (this takes ~1s)";
+  // Detection takes its turn with Process runs (one model-heavy request at a time).
+  statusEl.textContent = state.processing
+    ? "Detecting… (after the current run finishes)"
+    : "Detecting… (this takes ~1s)";
   try {
     const resp = await fetch("/api/v1/segment", { method: "POST", body: formData });
     if (!resp.ok) {
@@ -1446,6 +1463,8 @@ async function runSegmentation(clientX, clientY) {
       const saved = state.selections[owner];
       if (state.file === file && saved && saved.mode === "click") {
         saved.detected = data.mask;
+        saved.score = data.score;
+        saved.hint = selectedHint(data, owner);
         saved.dirty = true;
         saved.overlayMissing = true;
       }
@@ -1454,14 +1473,19 @@ async function runSegmentation(clientX, clientY) {
     state.mask.detectedMask = data.mask;
     state.mask.detectionScore = data.score;
     drawDetectedMaskOnCanvas(data.mask);
-    const areaPct = (data.mask_area_pct * 100).toFixed(1);
-    const borderText = data.selection_border_px ? `, +${data.selection_border_px}px edge margin` : "";
-    const nextStep = { blur: "Apply blur", tattoo: "Remove tattoo", facekeep: "Process" }[state.mask.owner] || "Remove object";
-    statusEl.textContent =
-      `Selected ${areaPct}% of the image${borderText}. Press “${nextStep}”, or tap elsewhere to re-select.`;
+    statusEl.textContent = selectedHint(data, owner);
   } catch (err) {
     setStatus(`Segmentation error: ${err.message}`, "error");
     if (stillHere()) clearClickSelection();
+    else if (state.selections[owner] && state.file === file) {
+      // That tool is in the background now: drop the tap marker from its saved selection (it kept nothing else).
+      const saved = state.selections[owner];
+      if (!saved.detected) {
+        saved.image = new ImageData(saved.image.width, saved.image.height);
+        saved.dirty = false;
+        saved.history = [];
+      }
+    }
   } finally {
     state.mask.segmenting = false;
   }

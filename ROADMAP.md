@@ -365,3 +365,10 @@ One `/process` run at a time (a second waits, progress says `queued`). `edit_mas
 Page: a late progress poll can't overwrite "Done", a tap result lands on the tool that was tapped, a selection is scaled
 rather than lost when the canvas is resized, and Undo survives switching tools. Grain stays cached on purpose (same
 settings, same pattern). Known, older: EDSR/ESPCN upscaling fails under OpenCV 5.1 ("model_proto.has_graph()").
+
+**1.22.2:** second review. `/matte`, `/segment`, `/inpaint` and `/tattoo` share the one-at-a-time lock with `/process`
+(`app/run_lock.py`). A request whose client disconnects gives up its place in the queue and stops between stages; a wait
+over 5 minutes returns 503. `elapsed_seconds` and the metric exclude queue time. An entry too big for the cache is no
+longer copied first, and only finished model files (.onnx, .pb, ...) count for the cache key. The Cache-Control middleware
+is plain ASGI now (`@app.middleware("http")` hid the disconnect). Page: tools in the background keep 3 undo steps, a tap
+result keeps its hint, and a failed tap leaves no marker dot.

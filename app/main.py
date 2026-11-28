@@ -62,17 +62,11 @@ def create_app() -> FastAPI:
         # JSONResponse, which quoted/escaped the text and broke scrapers).
         return Response(content=body, media_type=content_type)
 
-    @app.middleware("http")
-    async def revalidate_static(request: Request, call_next):
-        # Without a Cache-Control header Safari reuses its stored copy of the page and scripts for a long time
-        # (and plain-http origins get no service worker), so a rebuilt app never reaches the phone.
-        response = await call_next(request)
-        if not request.url.path.startswith(("/api/", "/metrics")) and response.status_code in (
-            200,
-            304,
-        ):
-            response.headers.setdefault("Cache-Control", "no-cache")
-        return response
+    # Without a Cache-Control header Safari reuses its stored copy of the page and scripts for a long time (and
+    # plain-http origins get no service worker), so a rebuilt app never reaches the phone. A plain ASGI middleware, not
+    # @app.middleware("http"): that one wraps ``receive`` so endpoints can't see the client disconnect, and an abandoned
+    # /process run then kept its place in the queue.
+    app.add_middleware(RevalidateStatic)
 
     # Static files (web/) at root
     web_dir = Path(__file__).parent.parent / "web"
@@ -80,6 +74,28 @@ def create_app() -> FastAPI:
         app.mount("/", StaticFiles(directory=str(web_dir), html=True), name="web")
 
     return app
+
+
+class RevalidateStatic:
+    """Add ``Cache-Control: no-cache`` to successful non-API responses that don't set one."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope["path"].startswith(("/api/", "/metrics")):
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_header(message):
+            if message["type"] == "http.response.start" and message["status"] in (200, 304):
+                headers = list(message.get("headers", []))
+                if not any(k.lower() == b"cache-control" for k, _ in headers):
+                    headers.append((b"cache-control", b"no-cache"))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_header)
 
 
 app = create_app()

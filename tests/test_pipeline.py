@@ -672,3 +672,30 @@ def test_unloading_idle_models_empties_the_stage_cache(monkeypatch):
     assert P._cache
     clear_all_model_caches()
     assert not P._cache and P._cache_bytes == 0
+
+
+def test_an_entry_too_big_for_the_cache_is_not_copied(monkeypatch):
+    import app.pipeline as P
+    from app.config import get_settings
+
+    copies = []
+    real = P._snapshot
+    monkeypatch.setattr(P, "_snapshot", lambda st: (copies.append(1), real(st))[1])
+    monkeypatch.setattr(get_settings(), "stage_cache_mb", 1)
+    P._cache_put("k", {"current": np.zeros((1024, 1024, 3), np.uint8)})  # 3 MB > 1 MB
+    assert copies == [] and not P._cache
+
+
+def test_model_fingerprint_ignores_downloads_in_progress(monkeypatch, tmp_path):
+    import app.pipeline as P
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "model_dir", tmp_path)
+    (tmp_path / "yunet.onnx").write_bytes(b"x")
+    before = P._models_fingerprint()
+    (tmp_path / "gfpgan.onnx.part").write_bytes(b"partial")
+    (tmp_path / ".gfpgan.tmp").write_bytes(b"partial")
+    (tmp_path / "gfpgan.sha256.json").write_text("{}")
+    assert P._models_fingerprint() == before
+    (tmp_path / "gfpgan.onnx").write_bytes(b"done")
+    assert P._models_fingerprint() != before

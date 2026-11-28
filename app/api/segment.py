@@ -14,6 +14,7 @@ from app.exceptions import DecodeError, ModelNotFoundError
 from app.models.sam import segment_with_point
 from app.monitoring import image_process_seconds, image_process_total
 from app.pipeline.io import decode_to_bgr, encode_png
+from app.run_lock import BusyError, heavy
 
 router = APIRouter()
 
@@ -63,7 +64,7 @@ async def segment(
     status = "ok"
     started = time.perf_counter()
     try:
-        mask, score = segment_with_point(img, (x, y))
+        mask, score = await heavy(segment_with_point, img, (x, y))
         mask = _expand_selection_mask(mask)
     except ModelNotFoundError:
         # Don't count as a 500 or "segment_error" — model availability is
@@ -72,6 +73,8 @@ async def segment(
         image_process_total.labels(status="model_missing").inc()
         image_process_seconds.labels(status="model_missing").observe(time.perf_counter() - started)
         raise
+    except BusyError:
+        raise  # 503: another edit is running; the app's error handler answers it
     except Exception as exc:
         status = "segment_error"
         image_process_total.labels(status=status).inc()

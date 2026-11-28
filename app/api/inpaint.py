@@ -15,6 +15,7 @@ from app.exceptions import DecodeError, ModelNotFoundError, ValidationError
 from app.monitoring import image_process_seconds, image_process_total
 from app.pipeline.inpaint import inpaint
 from app.pipeline.io import decode_to_bgr, encode_png
+from app.run_lock import BusyError, heavy
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,9 @@ async def inpaint_endpoint(
     )
 
     try:
-        result = inpaint(img, mask_img, radius=radius, algorithm=algorithm, iterations=iterations)
+        result = await heavy(
+            inpaint, img, mask_img, radius=radius, algorithm=algorithm, iterations=iterations
+        )
     except ModelNotFoundError as exc:
         # LaMa model missing — count separately so /health + metrics reflect it
         image_process_total.labels(status="model_missing").inc()
@@ -79,6 +82,8 @@ async def inpaint_endpoint(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except BusyError:
+        raise  # 503: another edit is running; the app's error handler answers it
     except Exception as exc:
         status = "inpaint_error"
         image_process_total.labels(status=status).inc()

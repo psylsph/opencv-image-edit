@@ -20,6 +20,7 @@ from app.models.matting import get_matting_model
 from app.monitoring import image_process_seconds, image_process_total
 from app.pipeline.io import decode_to_bgr
 from app.pipeline.preprocess import resize_if_needed
+from app.run_lock import heavy
 
 router = APIRouter()
 
@@ -45,7 +46,7 @@ async def matte(
 
     started = time.perf_counter()
     img = resize_if_needed(img, get_settings().max_image_dimension)
-    mask = get_matting_model(model_name).predict(img)
+    mask = await heavy(lambda: get_matting_model(model_name).predict(img))
     image_process_seconds.labels(status="ok").observe(time.perf_counter() - started)
     image_process_total.labels(status="ok").inc()
 

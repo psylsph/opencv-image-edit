@@ -80,10 +80,12 @@ def _cache_put(key: str, state: dict) -> None:
     """Store a snapshot, evicting the oldest entries to stay within ``stage_cache_mb`` and ``_CACHE_MAX``."""
     global _cache_bytes
     budget = get_settings().stage_cache_mb * 1024 * 1024
-    snap = _snapshot(state)
-    size = _snapshot_bytes(snap)
+    size = _snapshot_bytes(
+        state
+    )  # measured before copying: an entry too big to keep isn't copied at all
     if size > budget:
         return  # one entry bigger than the whole budget (e.g. a huge upscale): don't cache it
+    snap = _snapshot(state)
     with _cache_lock:
         old = _cache.pop(key, None)
         if old is not None:
@@ -104,13 +106,21 @@ def _cache_get(key: str) -> dict | None:
         return hit[0]
 
 
+_MODEL_EXTENSIONS = (".onnx", ".pb", ".pth", ".pt", ".bin", ".safetensors", ".tflite", ".data")
+
+
 def _models_fingerprint() -> str:
     """Names, sizes and dates of the installed model files, so copying a new model in invalidates cached results."""
     root = get_settings().model_dir
     entries = []
     try:
-        for dirpath, _dirs, files in os.walk(root):
+        for dirpath, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
             for name in files:
+                # Only finished model files: a download in progress (.part, .tmp, dotfiles) or its metadata
+                # changes on every run and would make every run miss the cache.
+                if name.startswith(".") or not name.endswith(_MODEL_EXTENSIONS):
+                    continue
                 try:
                     st = os.stat(os.path.join(dirpath, name))
                 except OSError:
